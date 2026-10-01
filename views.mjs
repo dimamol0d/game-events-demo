@@ -13,7 +13,17 @@ export function icon(name) {
 }
 
 function kindLabel(event) {
-  return event.kind === 'build' ? 'Билд' : event.kind === 'news' ? 'Новость' : event.severity === 'major' ? 'Большой патч' : 'Исправления';
+  return event.kind === 'build' ? 'Билд' : event.kind === 'news' ? 'Новость' : event.severity === 'major' ? 'Большой патч' : event.severity === 'balance' ? 'Балансный патч' : 'Исправления';
+}
+
+function sourceLinks(event) {
+  return (event.sourceLinks || []).flatMap(link => {
+    try {
+      const url = new URL(link.url);
+      if (url.protocol !== 'https:' || url.username || url.password) return [];
+      return [`<a class="secondary-button source-link" href="${h(url.href)}" target="_blank" rel="noopener noreferrer">${h(link.label)}</a>`];
+    } catch { return []; }
+  }).join('');
 }
 
 function eventRow(event, preferences) {
@@ -34,7 +44,8 @@ function detail(state, event) {
     <div class="tag-list">${event.tags.map(tag => `<span>${h(tag)}</span>`).join('')}</div>
     ${event.details.map(text => `<p class="detail-paragraph">${h(text)}</p>`).join('')}
     ${event.kind === 'build' ? `<dl class="build-detail"><div><dt>Предыдущий билд</dt><dd>${h(event.oldBuild)}</dd></div><div><dt>Новый билд</dt><dd>${h(event.newBuild)}</dd></div></dl>` : ''}
-    <aside class="notice">${event.demo ? 'Это пример для обсуждения экрана. Никакой настоящий патч здесь не объявлен.' : 'Описания официальных обновлений ещё не подключены к этому экрану.'}</aside>
+    ${sourceLinks(event)}
+    <aside class="notice">${event.reference ? 'Это настоящий патч, добавленный вручную для показа интерфейса. Дата — время официальной публикации, не обнаружения нашим сервисом. Приложение ещё не обновляет эту сводку автоматически.' : event.demo ? 'Это выдуманный пример для обсуждения экрана, не настоящий патч.' : 'Описания официальных обновлений ещё не подключены к этому экрану.'}</aside>
     <button type="button" class="secondary-button" data-action="settings">${icon('bell')}Настроить, что получать</button>
   </section>`;
 }
@@ -48,7 +59,7 @@ function feed(state) {
   return `<section class="feed" aria-label="События игры">
     ${state.tab === 'since' ? `<p class="context-note">${state.since ? `После ${h(formatDate(state.since))}. История визитов хранится на этом устройстве.` : 'Первый визит в этом режиме — показываем доступную историю.'}</p>` : ''}
     ${featured ? `<button type="button" class="featured-event" data-event="${h(featured.id)}">
-      <span class="category">Последнее важное${featured.demo ? ' · Пример' : ''}</span><h2>${h(featured.title)}</h2>
+      <span class="category">${featured.reference ? 'Настоящий патч · добавлен вручную' : `Последнее важное${featured.demo ? ' · Пример' : ''}`}</span><h2>${h(featured.title)}</h2>
       <p>${h(featured.summary)}</p><div class="tag-list">${featured.tags.map(tag => `<span>${h(tag)}</span>`).join('')}</div>
       <span class="featured-bottom">${h(formatDate(featured.detectedAt))}<span>Посмотреть изменения ${icon('arrow')}</span></span></button>` : ''}
     <div class="section-title"><h2>${state.tab === 'important' ? 'Ранее' : state.tab === 'since' ? 'Что появилось' : 'История событий'}</h2><span>${eventCountLabel(featured ? events.length - 1 : events.length)}</span></div>
@@ -87,7 +98,7 @@ export function renderApp(state) {
   const event = state.events.find(item => item.id === state.eventId);
   return `<div class="app-shell"><header class="app-header"><a class="brand" href="#game"><span class="brand-symbol" aria-hidden="true">g<span>•</span></span><span>Игровые обновления<small>Первый интерфейс</small></span></a>
     ${state.demoOnly ? '<span class="prototype-label">Прототип</span>' : `<label class="mode-select"><span class="sr-only">Источник данных</span><select id="data-mode"><option value="demo" ${state.mode === 'demo' ? 'selected' : ''}>Примеры</option><option value="lab" ${state.mode === 'lab' ? 'selected' : ''}>Лаборатория</option></select></label>`}</header>
-    <main id="main-content"><div class="mode-banner ${state.mode} ${state.mode === 'lab' && !state.loading && !state.error && state.lab?.healthy ? 'connected' : ''}"><span class="status-dot"></span><span>${state.mode === 'demo' ? 'Макет. Все события ниже — выдуманные примеры.' : state.loading ? 'Подключаю лабораторию…' : state.error ? 'Лаборатория недоступна. Примеры не подставляются.' : `Реальные билды · ${state.lab?.healthy ? 'система работает' : 'наблюдение требует проверки'}`}</span></div>
+    <main id="main-content"><div class="mode-banner ${state.mode} ${state.mode === 'lab' && !state.loading && !state.error && state.lab?.healthy ? 'connected' : ''}"><span class="status-dot"></span><span>${state.mode === 'demo' ? 'Прототип. Патч 7.41f настоящий; остальные события выдуманы.' : state.loading ? 'Подключаю лабораторию…' : state.error ? 'Лаборатория недоступна. Примеры не подставляются.' : `Реальные билды · ${state.lab?.healthy ? 'система работает' : 'наблюдение требует проверки'}`}</span></div>
     ${state.page === 'settings' ? settings(state) : event ? detail(state, event) : `<section class="game-hero" aria-labelledby="game-title"><div class="game-art"><img src="${h(new URL('./assets/dota2-logo.png', import.meta.url).href)}" alt="Оригинальный логотип Dota 2" width="128" height="128"></div>
       <div class="game-heading"><span class="platform-label">Steam</span><h1 id="game-title" tabindex="-1">${h(state.game.name)}</h1><p>${h(state.game.subtitle)}</p><button type="button" class="notification-button" data-action="settings">${icon('bell')}Мои уведомления ${icon('arrow')}</button></div>
       <div class="game-facts"><span>Публичный билд</span><strong>${h(state.mode === 'demo' ? 'Пример' : state.lab?.buildId || 'Нет данных')}</strong><small>${state.mode === 'lab' && state.lab?.observedAt ? `Замечен ${h(formatDate(state.lab.observedAt))}` : 'Описания дополнят ранний сигнал'}</small></div></section>

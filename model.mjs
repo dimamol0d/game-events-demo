@@ -41,15 +41,34 @@ export function selectEvents(events, gameId, tab, since = null) {
     .sort((a, b) => Date.parse(b.detectedAt) - Date.parse(a.detectedAt));
 }
 
+// A manually curated reference, not an event detected or delivered by this UI.
+// Verified against Valve's patch feed and official Steam announcement on 2026-10-01.
+export const latestDotaPatch = Object.freeze({
+  id: 'reference:dota:7.41f', gameId: 570, kind: 'patch', severity: 'balance',
+  title: 'Патч 7.41f — коротко о главном',
+  summary: 'Изменены 35 героев и 16 предметов: Lina и Shadow Fiend ослаблены, Anti-Mage усилен. Daedalus и Dragon Lance стали дороже.',
+  detectedAt: '2026-09-15T18:44:25Z', publishedAt: '2026-09-15T18:44:25Z',
+  source: 'Valve · Dota2.com', demo: false, reference: true,
+  tags: ['Баланс героев', 'Предметы', 'Исправления'],
+  details: [
+    'Герои. Lina: базовый интеллект 30 → 28; бонус скорости атаки за заряд Fiery Soul уменьшен с 8/16/24/32 до 7/14/21/28, длительность — с 18 до 16 секунд.',
+    'Shadow Fiend: дополнительный урон за душу снижен с 3 до 2. Anti-Mage: урон Mana Break от сожжённой маны увеличен с 60% до 65%. Это отдельные изменения, не полный список героев.',
+    "Предметы. Daedalus теперь стоит 5200 вместо 5100 золота, Dragon Lance — 2000 вместо 1900. Урон Arctic Blast у Shiva's Guard снижен с 260 до 225.",
+    'Исправления из сопутствующей публикации Valve: убрана возможность прятаться в геометрии у верхней ямы Рошана; исправлены дополнительное золото Bounty Hunter и взаимодействие критического таланта Lina с другими критами.',
+    'В подборке нет подтверждённого размера скачивания. Сводка составлена вручную по официальным источникам; полные списки изменений доступны ниже.',
+  ],
+  sourceLinks: [
+    { label: 'Полный патч на Dota2.com', url: 'https://www.dota2.com/patches/7.41f' },
+    { label: 'Публикация Valve и исправления', url: 'https://www.dota2.com/newsentry/677383425371407609?l=russian' },
+  ],
+});
+
 export function demoEvents(now = Date.now()) {
-  const at = hours => new Date(now - hours * 3600000).toISOString();
+  // Keep fictional examples older than the reference; never move a real release to today.
+  const anchor = Math.min(now, Date.parse(latestDotaPatch.publishedAt));
+  const at = hours => new Date(anchor - hours * 3600000).toISOString();
   return [
-    { id: 'demo:major', gameId: 570, kind: 'patch', severity: 'major', title: 'Обновление игрового процесса',
-      summary: 'Карта, герои и предметы — пример того, как будет выглядеть большой патч.',
-      detectedAt: at(3), source: 'Демонстрационный пример', demo: true,
-      tags: ['Карта', 'Герои', 'Предметы'],
-      details: ['Это выдуманный пример для настройки интерфейса, не новость о настоящем патче.',
-        'В этом месте появится проверенное описание изменений и ссылка на официальную публикацию. Пока мы выбираем, как тебе удобнее это читать.'] },
+    { ...latestDotaPatch },
     { id: 'demo:build', gameId: 570, kind: 'build', severity: null, title: 'Изменился публичный билд',
       summary: 'Ранний технический сигнал. Сам по себе ещё не означает выход патча.',
       detectedAt: at(4), source: 'Пример сигнала SteamKit', demo: true, tags: ['Без описания'],

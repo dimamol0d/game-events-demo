@@ -27,6 +27,7 @@ h1, h2, h3, p { margin: 0; }
 .game-art { width: 150px; height: 166px; display: grid; place-items: center; background: #242326; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; }
 .game-art img { display: block; width: 78%; height: auto; max-height: 85%; object-fit: contain; }
 .prototype-label { color: var(--accent); font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; }
+.source-link { display: flex; margin-top: 16px; text-align: center; }
 .platform-label, .category { color: var(--accent); font-size: 13px; font-weight: 600; }
 .game-heading h1 { font: 56px/1.1 var(--serif); letter-spacing: -2px; margin: 7px 0 9px; }
 .game-heading p { color: var(--muted); font-size: 15px; }
