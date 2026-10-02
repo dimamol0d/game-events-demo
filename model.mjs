@@ -1,127 +1,92 @@
-export const games = Object.freeze([
-  { id: 570, name: 'Dota 2', subtitle: 'Твоя игра. Только нужные изменения.', initials: 'D2' },
+export const DEFAULT_PREFS = Object.freeze({ enabled: true, mode: 'updates', patches: true, builds: false, news: false, include_unknown: true, timing: 'described' });
+export const MODES = Object.freeze([
+  { id: 'updates', name: 'Обновления', text: 'Официальные патчи и исправления. Обычные новости и технические билды остаются в истории.' },
+  { id: 'major', name: 'Только крупные', text: 'Обновления, которым присвоена категория «крупное». Неоценённые публикации — по переключателю ниже.' },
+  { id: 'medium', name: 'Средние', text: 'Обновления с категорией «среднее». Неоценённые публикации — по переключателю ниже.' },
+  { id: 'minor', name: 'Мелкие', text: 'Небольшие патчи и исправления с категорией «мелкое». Неоценённые публикации — по переключателю ниже.' },
+  { id: 'all', name: 'Всё подряд', text: 'Обновления, новости и новые публичные билды. В активных играх сообщений может быть много.' },
+  { id: 'custom', name: 'Свои правила', text: 'Выберите типы событий самостоятельно. Несколько технических билдов могут выйти за один день.' },
 ]);
 
-export const defaultPreferences = Object.freeze({
-  enabled: true, preset: 'updates', patches: true, builds: false, news: false, speed: 'fast',
-});
+export function escapeHTML(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+}
 
-export function normalizePreferences(value) {
-  const source = value && typeof value === 'object' ? value : {};
-  const result = { ...defaultPreferences };
-  for (const key of ['enabled', 'patches', 'builds', 'news']) {
-    if (typeof source[key] === 'boolean') result[key] = source[key];
+export function safeURL(value) {
+  if (typeof value !== 'string' || !value || value !== value.trim()) return '';
+  try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : ''; }
+  catch { return ''; }
+}
+
+const IMAGE_HOSTS = new Set(['cdn.akamai.steamstatic.com', 'cdn.cloudflare.steamstatic.com', 'shared.akamai.steamstatic.com', 'shared.fastly.steamstatic.com', 'store.akamai.steamstatic.com', 'store.cloudflare.steamstatic.com', 'steamcdn-a.akamaihd.net', 'cdn.steamstatic.com']);
+export function safeImageURL(value) {
+  const valid = safeURL(value);
+  if (!valid) return '';
+  const url = new URL(valid);
+  return url.protocol === 'https:' && IMAGE_HOSTS.has(url.hostname) && (!url.port || url.port === '443') ? url.href : '';
+}
+
+export function parseRoute(hash = '') {
+  const [path, query = ''] = hash.replace(/^#/, '').split('?');
+  const match = /^(game|settings)\/(\d+)$/.exec(path);
+  if (match && Number(match[2]) > 0 && Number.isSafeInteger(Number(match[2]))) {
+    return { page: match[1], appId: Number(match[2]), eventId: new URLSearchParams(query).get('event') };
   }
-  if (['updates', 'all', 'major', 'custom'].includes(source.preset)) result.preset = source.preset;
-  if (['fast', 'detailed'].includes(source.speed)) result.speed = source.speed;
-  return result;
+  return { page: ['home', 'search', 'library', 'inbox'].includes(path) ? path : 'home' };
 }
 
-export function applyPreset(preferences, preset) {
-  const value = normalizePreferences(preferences);
-  const options = {
-    updates: { patches: true, builds: false, news: false },
-    all: { patches: true, builds: true, news: true },
-    major: { patches: true, builds: false, news: false },
-  };
-  return options[preset] ? { ...value, ...options[preset], preset } : { ...value, preset: 'custom' };
+export function eventRoute(event) {
+  return `#game/${Number(event.app_id)}?event=${encodeURIComponent(String(event.id))}`;
 }
 
-export function wouldNotify(event, preferences) {
-  const value = normalizePreferences(preferences);
-  if (!value.enabled) return false;
-  if (value.preset === 'major') return event.kind === 'patch' && event.severity === 'major';
-  return Boolean({ patch: value.patches, build: value.builds, news: value.news }[event.kind]);
+export function mergeEvents(current = [], incoming = []) {
+  const events = new Map();
+  for (const event of [...current, ...incoming]) events.set(String(event.id), event);
+  return [...events.values()];
 }
 
-export function selectEvents(events, gameId, tab, since = null) {
-  return events.filter(event => event.gameId === gameId)
-    .filter(event => tab !== 'important' || event.kind === 'patch')
-    .filter(event => tab !== 'since' || !since || Date.parse(event.detectedAt) > Date.parse(since))
-    .sort((a, b) => Date.parse(b.detectedAt) - Date.parse(a.detectedAt));
+export function formatDate(value, withTime = false) {
+  const date = value ? new Date(value) : null;
+  if (!date || !Number.isFinite(date.getTime())) return 'Дата не указана';
+  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}) }).format(date);
 }
 
-// A manually curated reference, not an event detected or delivered by this UI.
-// Verified against Valve's patch feed and official Steam announcement on 2026-10-01.
-export const latestDotaPatch = Object.freeze({
-  id: 'reference:dota:7.41f', gameId: 570, kind: 'patch', severity: 'balance',
-  title: 'Патч 7.41f — коротко о главном',
-  summary: 'Изменены 35 героев и 16 предметов: Lina и Shadow Fiend ослаблены, Anti-Mage усилен. Daedalus и Dragon Lance стали дороже.',
-  detectedAt: '2026-09-15T18:44:25Z', publishedAt: '2026-09-15T18:44:25Z',
-  source: 'Valve · Dota2.com', demo: false, reference: true,
-  tags: ['Баланс героев', 'Предметы', 'Исправления'],
-  details: [
-    'Герои. Lina: базовый интеллект 30 → 28; бонус скорости атаки за заряд Fiery Soul уменьшен с 8/16/24/32 до 7/14/21/28, длительность — с 18 до 16 секунд.',
-    'Shadow Fiend: дополнительный урон за душу снижен с 3 до 2. Anti-Mage: урон Mana Break от сожжённой маны увеличен с 60% до 65%. Это отдельные изменения, не полный список героев.',
-    "Предметы. Daedalus теперь стоит 5200 вместо 5100 золота, Dragon Lance — 2000 вместо 1900. Урон Arctic Blast у Shiva's Guard снижен с 260 до 225.",
-    'Исправления из сопутствующей публикации Valve: убрана возможность прятаться в геометрии у верхней ямы Рошана; исправлены дополнительное золото Bounty Hunter и взаимодействие критического таланта Lina с другими критами.',
-    'В подборке нет подтверждённого размера скачивания. Сводка составлена вручную по официальным источникам; полные списки изменений доступны ниже.',
-  ],
-  sourceLinks: [
-    { label: 'Полный патч на Dota2.com', url: 'https://www.dota2.com/patches/7.41f' },
-    { label: 'Публикация Valve и исправления', url: 'https://www.dota2.com/newsentry/677383425371407609?l=russian' },
-  ],
-});
-
-export function demoEvents(now = Date.now()) {
-  // Keep fictional examples older than the reference; never move a real release to today.
-  const anchor = Math.min(now, Date.parse(latestDotaPatch.publishedAt));
-  const at = hours => new Date(anchor - hours * 3600000).toISOString();
-  return [
-    { ...latestDotaPatch },
-    { id: 'demo:build', gameId: 570, kind: 'build', severity: null, title: 'Изменился публичный билд',
-      summary: 'Ранний технический сигнал. Сам по себе ещё не означает выход патча.',
-      detectedAt: at(4), source: 'Пример сигнала SteamKit', demo: true, tags: ['Без описания'],
-      oldBuild: 'DEMO-100', newBuild: 'DEMO-101',
-      details: ['Пример смены билда. Размер скачивания и содержание обновления по этому сигналу неизвестны.'] },
-    { id: 'demo:fix', gameId: 570, kind: 'patch', severity: 'small', title: 'Исправления и стабильность',
-      summary: 'Пример небольшого обновления: исправленные ошибки без крупных изменений.',
-      detectedAt: at(26), source: 'Демонстрационный пример', demo: true, tags: ['Исправления'],
-      details: ['Тестовый пример маленького патча. Здесь будет оригинальный текст или проверенная сводка с источником.'] },
-    { id: 'demo:news', gameId: 570, kind: 'news', severity: null, title: 'Новость от разработчиков',
-      summary: 'Не каждая публикация — обновление игры. В истории они будут отличаться.',
-      detectedAt: at(48), source: 'Демонстрационный пример', demo: true, tags: ['Новость'],
-      details: ['Пример обычной новости. Она не помечена как патч и не включена в режим «Обновления».'] },
-  ];
+export function eventLabel(event) {
+  return ({ official_update_published: 'Обновление', official_news_published: 'Публикация', public_build_changed: 'Новый билд' })[event.kind] || 'Событие';
 }
 
-export function fromSnapshot(snapshot, gameId) {
-  if (!snapshot || !Array.isArray(snapshot.events) || !Array.isArray(snapshot.games)) {
-    throw new Error('Сервер вернул данные неизвестного формата.');
-  }
-  const game = snapshot.games.find(item => Number(item.app_id) === gameId);
-  const events = snapshot.events
-    .filter(item => Number(item.app_id) === gameId && item.kind === 'public_build_changed')
-    .filter(item => typeof item.detected_at === 'string' && Number.isFinite(Date.parse(item.detected_at)))
-    .map(item => ({
-      id: `lab:${item.event_key || item.id}`, gameId, kind: 'build', severity: null,
-      title: 'Изменился публичный билд',
-      summary: 'Steam зафиксировал новый билд. Подробности патча в этот экран пока не подключены.',
-      detectedAt: item.detected_at, source: String(item.source || 'SteamKit'),
-      oldBuild: String(item.old_build_id || '—'), newBuild: String(item.new_build_id || '—'),
-      tags: ['Технический сигнал'], demo: false,
-      details: ['Это настоящий сигнал из локальной базы, а не подтверждение крупного обновления.',
-        'По BuildID нельзя надёжно определить размер скачивания или список изменений. Официальные публикации подключим отдельно.'],
-    }));
-  return { events, buildId: game?.build_id || null, observedAt: game?.observed_at || null,
-    healthy: snapshot.health?.status === 'ok', tracked: Boolean(game) };
+export function excerpt(text, length = 190) {
+  const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return clean.length > length ? `${clean.slice(0, length).trimEnd()}…` : clean;
 }
 
-export function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, char => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[char]));
+export function preferencesForMode(mode, previous = DEFAULT_PREFS) {
+  const prefs = { ...DEFAULT_PREFS, ...previous, mode };
+  if (!MODES.some(item => item.id === mode)) return { ...prefs, mode: 'updates' };
+  if (mode !== 'custom') return { ...prefs, patches: true, builds: mode === 'all', news: mode === 'all', include_unknown: ['major', 'medium', 'minor'].includes(mode) ? false : prefs.include_unknown };
+  return prefs;
 }
 
-export function formatDate(value) {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime())
-    ? new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(date)
-    : 'Время неизвестно';
+export function coverageText(game) {
+  return ({ awaiting: 'Первая проверка ожидается', ready: 'Источники проверены', partial: 'Доступна часть источников', error: 'Проверка не удалась' })[game.poll_status] || 'Проверка ожидается';
 }
 
-export function eventCountLabel(count) {
-  const remainder = count % 100;
-  if (remainder >= 11 && remainder <= 14) return `${count} событий`;
-  return `${count} ${count % 10 === 1 ? 'событие' : count % 10 >= 2 && count % 10 <= 4 ? 'события' : 'событий'}`;
+export function sourceLabel(source) {
+  if (['steam-news-api', 'steam_news', 'steam_news_api', 'steam_community_announcements'].includes(source)) return 'Официальная публикация в Steam';
+  if (['steamkit', 'steamkit-pics', 'steamkit_pics', 'SteamKit/PICS'].includes(source)) return 'Данные Steam';
+  if (['steamcmd-api', 'steamcmd_api', 'steamcmd.net', 'api.steamcmd.net'].includes(source)) return 'Проверка публичного билда';
+  return 'Первоисточник';
+}
+
+export function publicationLanguage(event, preferred = 'ru') {
+  const translated = event.translation_status === 'ready' && typeof event.contents_ru === 'string' && Boolean(event.contents_ru.trim());
+  const russian = preferred !== 'original' && translated;
+  return { title: russian && typeof event.title_ru === 'string' && event.title_ru.trim() ? event.title_ru : event.title,
+    contents: russian ? event.contents_ru : event.contents, translated, russian,
+    originalRussian: String(event.original_language || '').toLowerCase().startsWith('ru') };
+}
+
+export function latestPublications(games = []) {
+  return games.filter(game => game.latest_event && ['official_update_published', 'official_news_published'].includes(game.latest_event.kind))
+    .sort((a, b) => (Date.parse(b.latest_event.published_at || b.latest_event.sort_at) || 0) - (Date.parse(a.latest_event.published_at || a.latest_event.sort_at) || 0));
 }

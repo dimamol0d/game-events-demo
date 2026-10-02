@@ -1,48 +1,77 @@
-// Telegram is an optional host, not the owner of application or game state.
+// Only raw signed initData is sent to the server; unsafe client identity fields
+// never authorize a profile. Outside Telegram this adapter has no user data.
+export async function loadTelegramSDK(host = globalThis.window) {
+  if (host?.Telegram?.WebApp) return true;
+  if (!host?.document) return false;
+  return await new Promise(resolve => {
+    const script = host.document.createElement('script');
+    const timer = setTimeout(() => resolve(false), 10000);
+    const finish = value => { clearTimeout(timer); resolve(value); };
+    script.src = 'https://telegram.org/js/telegram-web-app.js?61';
+    script.async = true;
+    script.onload = () => finish(Boolean(host.Telegram?.WebApp));
+    script.onerror = () => finish(false);
+    host.document.head.append(script);
+  });
+}
+
 export function createTelegramAdapter(host = globalThis.window) {
-  const getApp = () => host?.Telegram?.WebApp;
-  let onBack = null;
-  let attachedBack = null;
-  let initialized = null;
+  let app;
+  let backHandler;
+  let initialized = false;
   const cleanups = [];
 
-  function syncTheme() {
-    const app = getApp();
+  function syncAppearance() {
     const root = host?.document?.documentElement;
-    if (app && root && app.initData) root.dataset.theme = app.colorScheme === 'light' ? 'light' : 'dark';
+    if (!root || !app) return;
+    root.dataset.theme = app.colorScheme === 'dark' ? 'dark' : 'light';
+    const inset = app.contentSafeAreaInset || app.safeAreaInset || {};
+    for (const edge of ['top', 'right', 'bottom', 'left']) {
+      const value = Number(inset[edge]);
+      root.style.setProperty('--tg-inset-' + edge, Number.isFinite(value) && value > 0 ? value + 'px' : '0px');
+    }
+    if (Number.isFinite(app.viewportStableHeight) && app.viewportStableHeight > 0) root.style.setProperty('--app-height', app.viewportStableHeight + 'px');
   }
 
   function updateBack(handler) {
-    onBack = handler;
-    const app = getApp();
-    const button = app?.initData ? app.BackButton : null;
-    if (!button) return;
-    if (attachedBack) button.offClick?.(attachedBack);
-    attachedBack = handler;
-    if (handler) { button.onClick?.(handler); button.show?.(); }
-    else button.hide?.();
+    if (app?.BackButton && backHandler) app.BackButton.offClick?.(backHandler);
+    backHandler = handler;
+    if (!app?.BackButton) return;
+    if (handler) { app.BackButton.onClick?.(handler); app.BackButton.show?.(); }
+    else app.BackButton.hide?.();
   }
 
   function init() {
-    const app = getApp();
-    if (!app?.initData) return false;
-    if (initialized === app) return true;
-    initialized = app;
-    syncTheme();
+    if (initialized) return true;
+    const candidate = host?.Telegram?.WebApp;
+    if (!candidate?.initData) return false;
+    app = candidate;
+    initialized = true;
+    syncAppearance();
     app.ready?.();
-    app.expand?.();
-    app.onEvent?.('themeChanged', syncTheme);
-    cleanups.push(() => app.offEvent?.('themeChanged', syncTheme));
-    updateBack(onBack);
+    for (const name of ['themeChanged', 'viewportChanged', 'safeAreaChanged', 'contentSafeAreaChanged']) {
+      app.onEvent?.(name, syncAppearance);
+      cleanups.push(() => app.offEvent?.(name, syncAppearance));
+    }
+    updateBack(backHandler);
     return true;
   }
 
   function destroy() {
     for (const cleanup of cleanups.splice(0)) cleanup();
     updateBack(null);
-    initialized = null;
+    app = undefined;
+    initialized = false;
   }
-
-  // initData is deliberately not used for authentication in this local UI prototype.
-  return { init, updateBack, destroy };
+  function rawInitData() {
+    const raw = host?.Telegram?.WebApp?.initData;
+    return typeof raw === 'string' ? raw : '';
+  }
+  // Called only as a direct response to an explicit user delivery action.
+  async function requestWriteAccess() {
+    const webApp = host?.Telegram?.WebApp;
+    if (!webApp?.requestWriteAccess) return false;
+    return await new Promise(resolve => webApp.requestWriteAccess(allowed => resolve(Boolean(allowed))));
+  }
+  return { init, updateBack, destroy, rawInitData, requestWriteAccess };
 }

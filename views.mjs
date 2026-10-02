@@ -1,108 +1,146 @@
-import { escapeHtml as h, formatDate, selectEvents, wouldNotify, eventCountLabel } from './model.mjs';
+import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, MODES, DEFAULT_PREFS } from './model.mjs';
 
-export function icon(name) {
-  const paths = {
-    game: '<path d="M7 7h10l4 10-3 2-4-4h-4l-4 4-3-2 4-10Z"/><path d="M7 11v4m-2-2h4m6-1h.01m2 2h.01"/>',
-    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Z"/><path d="M10 21h4"/>',
-    arrow: '<path d="m9 5 7 7-7 7"/>', back: '<path d="m14 5-7 7 7 7"/>',
-    refresh: '<path d="M20 11a8 8 0 1 0-2 7M20 4v7h-7"/>',
-    check: '<path d="m5 12 4 4L19 6"/>', clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-    build: '<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5m-18 5 9 5 9-5"/>',
-  };
-  return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${paths[name] || paths.game}</svg>`;
+const paths = {
+  home: '<path d="m3 11 9-8 9 8M5 10v11h5v-7h4v7h5V10"/>',
+  search: '<circle cx="10.5" cy="10.5" r="7"/><path d="m16 16 5 5"/>',
+  library: '<path d="M4 4h4v17H4zM11 4h4v17h-4zM18 4l4 16-4 1-4-16z"/>',
+  inbox: '<path d="M5 17h14l-2-4V9a5 5 0 0 0-10 0v4zM10 21h4"/>',
+  settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  arrow: '<path d="m14 5-7 7 7 7"/>',
+  plus: '<path d="M12 4v16M4 12h16"/>',
+  refresh: '<path d="M20 7v5h-5M4 17v-5h5M5 8a8 8 0 0 1 13-3l2 2M4 17l2 2a8 8 0 0 0 13-3"/>',
+  external: '<path d="M14 3h7v7M21 3 10 14M10 5H4v16h16v-6"/>',
+};
+export function icon(name, extra = '') { return `<svg class="icon ${extra}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.home}</svg>`; }
+
+export function art(game, className = '', lazy = true) {
+  const url = safeImageURL(game.image_url);
+  return url ? `<img class="game-art ${className}" src="${h(url)}" alt="" ${lazy ? 'loading="lazy"' : ''} decoding="async" referrerpolicy="no-referrer">` : `<div class="game-art art-fallback ${className}" aria-hidden="true">${h(game.name?.slice(0, 2) || 'Игра')}</div>`;
 }
 
-function kindLabel(event) {
-  return event.kind === 'build' ? 'Билд' : event.kind === 'news' ? 'Новость' : event.severity === 'major' ? 'Большой патч' : event.severity === 'balance' ? 'Балансный патч' : 'Исправления';
+export function externalLink(url, label, className = '') {
+  const valid = safeURL(url);
+  return valid ? `<a class="${className}" href="${h(valid)}" target="_blank" rel="noopener noreferrer">${h(label)} ${icon('external')}</a>` : '';
 }
 
-function sourceLinks(event) {
-  return (event.sourceLinks || []).flatMap(link => {
-    try {
-      const url = new URL(link.url);
-      if (url.protocol !== 'https:' || url.username || url.password) return [];
-      return [`<a class="secondary-button source-link" href="${h(url.href)}" target="_blank" rel="noopener noreferrer">${h(link.label)}</a>`];
-    } catch { return []; }
-  }).join('');
+export function shell(route, bootstrap) {
+  const active = route.page === 'game' || route.page === 'settings' ? 'library' : route.page;
+  const nav = [['home', 'Главная'], ['search', 'Поиск'], ['library', 'Библиотека'], ['inbox', 'Уведомления']].map(([key, label]) => `<a class="nav-item ${active === key ? 'active' : ''}" href="#${key}" ${active === key ? 'aria-current="page"' : ''}>${icon(key)}<span>${label}</span>${key === 'inbox' ? '<span class="unread-count" data-unread' + (!bootstrap?.unread_count ? ' hidden' : '') + '>' + h(bootstrap?.unread_count || '') + '</span>' : ''}</a>`).join('');
+  const running = bootstrap?.health?.worker_running;
+  return `<div class="app-layout">
+    <aside class="sidebar"><a class="brand" href="#home"><svg class="brand-mark" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="16"/><circle cx="21" cy="21" r="8"/><path d="M21 5v16l12-8"/><circle class="radar-dot" cx="21" cy="21" r="2.7"/></svg><span>Игровой<br>радар</span></a>
+    <nav class="desktop-nav" aria-label="Основная навигация">${nav}</nav>
+    <div class="sidebar-bottom"><span class="connection-status"><i class="status-dot ${running ? 'is-running' : ''}"></i>${running ? 'Проверка игр работает' : 'Проверка игр приостановлена'}</span><p>Черновая версия<br>Развиваем постепенно</p></div></aside>
+    <div class="workspace"><header class="topbar"><a class="mobile-brand" href="#home">Игровой радар</a><div class="topbar-context">Всё об обновлениях ваших игр</div><div class="profile-pill"><span class="avatar" aria-hidden="true">${h((bootstrap?.profile?.name || 'М').slice(0, 1))}</span><span>${h(bootstrap?.profile?.name || 'Мой профиль')}<small>${bootstrap?.profile?.local_only === false ? 'Профиль Telegram' : 'В этом браузере'}</small></span></div></header>
+      <main id="main-content" tabindex="-1"></main>
+    </div><nav class="mobile-nav" aria-label="Навигация на телефоне">${nav}</nav>
+  </div>`;
 }
 
-function eventRow(event, preferences) {
-  return `<button type="button" class="event-row" data-event="${h(event.id)}">
-    <span class="event-icon ${event.kind}">${icon(event.kind === 'build' ? 'build' : event.kind === 'news' ? 'clock' : 'game')}</span>
-    <span class="event-body"><span class="event-meta">${h(kindLabel(event))}<span>${h(formatDate(event.detectedAt))}</span></span>
-      <strong>${h(event.title)}</strong><span class="event-summary">${h(event.summary)}</span>
-      <span class="event-footer">${event.demo ? 'Пример' : h(event.source)}${wouldNotify(event, preferences) ? '<span>Выбран фильтром</span>' : ''}</span>
-    </span><span class="row-arrow">${icon('arrow')}</span></button>`;
+export function pageHeader(title, text, actions = '') {
+  return `<div class="page-heading"><div><h1>${h(title)}</h1>${text ? `<p>${h(text)}</p>` : ''}</div>${actions ? `<div class="heading-actions">${actions}</div>` : ''}</div>`;
 }
 
-function detail(state, event) {
-  return `<section class="detail" aria-labelledby="detail-title">
-    <button type="button" class="text-button back-button" data-action="back">${icon('back')}Назад к игре</button>
-    <div class="detail-heading"><span class="category">${h(kindLabel(event))}${event.demo ? ' · Пример' : ''}</span>
-      <h1 id="detail-title" tabindex="-1">${h(event.title)}</h1><p class="subtle">${h(formatDate(event.detectedAt))} · ${h(event.source)}</p></div>
-    <p class="detail-lead">${h(event.summary)}</p>
-    <div class="tag-list">${event.tags.map(tag => `<span>${h(tag)}</span>`).join('')}</div>
-    ${event.details.map(text => `<p class="detail-paragraph">${h(text)}</p>`).join('')}
-    ${event.kind === 'build' ? `<dl class="build-detail"><div><dt>Предыдущий билд</dt><dd>${h(event.oldBuild)}</dd></div><div><dt>Новый билд</dt><dd>${h(event.newBuild)}</dd></div></dl>` : ''}
-    ${sourceLinks(event)}
-    <aside class="notice">${event.reference ? 'Это настоящий патч, добавленный вручную для показа интерфейса. Дата — время официальной публикации, не обнаружения нашим сервисом. Приложение ещё не обновляет эту сводку автоматически.' : event.demo ? 'Это выдуманный пример для обсуждения экрана, не настоящий патч.' : 'Описания официальных обновлений ещё не подключены к этому экрану.'}</aside>
-    <button type="button" class="secondary-button" data-action="settings">${icon('bell')}Настроить, что получать</button>
-  </section>`;
+export function emptyState(title, text, action = '') {
+  return `<div class="empty-state"><div class="empty-symbol">${icon('library')}</div><h2>${h(title)}</h2><p>${h(text)}</p>${action}</div>`;
 }
 
-function feed(state) {
-  if (state.loading) return '<section class="empty-state" role="status"><div class="loading-dot"></div><h2>Загружаю события…</h2><p>Читаю локальную лабораторию.</p></section>';
-  if (state.error) return `<section class="empty-state"><h2>Не удалось получить данные</h2><p>${h(state.error)}</p>
-    <button class="primary-button" data-action="refresh">Попробовать ещё раз</button><button class="text-button" data-action="demo">Посмотреть примеры</button></section>`;
-  const events = selectEvents(state.events, state.game.id, state.tab, state.since);
-  const featured = state.tab === 'important' ? events[0] : null;
-  return `<section class="feed" aria-label="События игры">
-    ${state.tab === 'since' ? `<p class="context-note">${state.since ? `После ${h(formatDate(state.since))}. История визитов хранится на этом устройстве.` : 'Первый визит в этом режиме — показываем доступную историю.'}</p>` : ''}
-    ${featured ? `<button type="button" class="featured-event" data-event="${h(featured.id)}">
-      <span class="category">${featured.reference ? 'Настоящий патч · добавлен вручную' : `Последнее важное${featured.demo ? ' · Пример' : ''}`}</span><h2>${h(featured.title)}</h2>
-      <p>${h(featured.summary)}</p><div class="tag-list">${featured.tags.map(tag => `<span>${h(tag)}</span>`).join('')}</div>
-      <span class="featured-bottom">${h(formatDate(featured.detectedAt))}<span>Посмотреть изменения ${icon('arrow')}</span></span></button>` : ''}
-    <div class="section-title"><h2>${state.tab === 'important' ? 'Ранее' : state.tab === 'since' ? 'Что появилось' : 'История событий'}</h2><span>${eventCountLabel(featured ? events.length - 1 : events.length)}</span></div>
-    ${events.length ? `<div class="event-list">${(featured ? events.slice(1) : events).map(event => eventRow(event, state.preferences)).join('') || '<p class="context-note">Других важных обновлений в этой выборке нет.</p>'}</div>`
-      : `<div class="empty-state"><span class="empty-icon">${icon('clock')}</span><h3>${state.tab === 'since' ? 'Новых событий в выборке нет' : state.tab === 'important' ? 'Подтверждённых патчей здесь пока нет' : 'В выборке пока нет событий'}</h3>
-        <p>${state.mode === 'lab' ? 'Этот экран читает последние 100 событий лаборатории по всем играм. Пока подключены только реальные смены билда; это не полная история патчей.' : 'Попробуй другую вкладку или вернись позже.'}</p>
-        ${state.tab === 'important' ? '<button class="text-button" data-tab="all">Посмотреть все события</button>' : ''}</div>`}
-    ${state.mode === 'lab' && events.length ? '<p class="context-note">Показаны события Dota из последних 100 событий лаборатории. Официальные публикации ещё не подключены.</p>' : ''}
-  </section>`;
+export function errorState(message, retry = 'retry') {
+  return `<div class="error-state" role="alert"><h2>Не получилось загрузить</h2><p>${h(message)}</p><button class="button secondary" type="button" data-action="${retry}">Попробовать снова</button></div>`;
 }
 
-function settings(state) {
-  const p = state.draft;
-  const presets = [
-    ['updates', 'Обновления', 'Патчи и исправления, без технического шума.'],
-    ['all', 'Всё подряд', 'Патчи, новости и каждый доступный сигнал билда.'],
-    ['major', 'Только крупное', 'Только патчи с подтверждёнными большими изменениями.'],
-    ['custom', 'Свой режим', 'Выбери нужные типы событий самостоятельно.'],
-  ];
-  const matched = state.events.filter(event => wouldNotify(event, p));
-  return `<section class="settings" aria-labelledby="settings-title"><div class="page-heading"><span class="category">${h(state.game.name)}</span><h1 id="settings-title" tabindex="-1">Что тебе присылать?</h1><p>Меньше шума. Больше нужного.</p></div>
-    <aside class="notice">Настраиваем будущие уведомления. Сейчас выбор сохраняется только на этом устройстве и не меняет работу Telegram-бота.</aside>
-    <label class="toggle-line"><span><strong>Получать уведомления</strong><small>Черновая настройка для этой игры</small></span><input type="checkbox" data-setting="enabled" ${p.enabled ? 'checked' : ''}><span class="switch" aria-hidden="true"></span></label>
-    <fieldset class="presets"><legend>Режим уведомлений</legend>${presets.map(([id, title, description]) => `<label class="preset ${p.preset === id ? 'selected' : ''}"><input type="radio" name="preset" value="${id}" ${p.preset === id ? 'checked' : ''}><span><strong>${title}</strong><small>${description}</small></span><span class="radio-mark" aria-hidden="true"></span></label>`).join('')}</fieldset>
-    ${p.preset === 'all' ? '<p class="warning-note">Билды могут меняться часто. Этот режим способен присылать много сообщений.</p>' : ''}
-    ${p.preset === 'major' ? '<p class="warning-note">В макете этот режим можно попробовать. Надёжное определение размера настоящего патча ещё не подключено.</p>' : ''}
-    ${p.preset === 'custom' ? `<fieldset class="custom-options"><legend>Типы событий</legend>${[['patches', 'Патчи и исправления'], ['builds', 'Смены публичного билда'], ['news', 'Новости разработчиков']].map(([key, label]) => `<label><input type="checkbox" data-setting="${key}" ${p[key] ? 'checked' : ''}>${label}</label>`).join('')}</fieldset>` : ''}
-    <fieldset class="speed-options"><legend>Скорость или подробности?</legend><label><input type="radio" name="speed" value="fast" ${p.speed === 'fast' ? 'checked' : ''}><span><strong>Быстрый сигнал</strong><small>Как только заметили событие, даже без описания.</small></span></label><label><input type="radio" name="speed" value="detailed" ${p.speed === 'detailed' ? 'checked' : ''}><span><strong>Дождаться подробностей</strong><small>Получить сообщение, когда появится проверенное описание.</small></span></label></fieldset>
-    <div class="filter-preview"><div><h2>Как сработает фильтр</h2><span>${matched.length} из ${state.events.length} ${state.mode === 'demo' ? 'примеров' : 'событий выборки'}</span></div><p>${matched.length ? matched.map(event => h(event.title)).join('<br>') : 'В этой выборке ничего не подходит.'}</p><small>Это проверка типов событий, не прогноз частоты или сроков доставки.</small></div>
-    <button type="button" class="primary-button save-button" data-action="save">${icon('check')}Сохранить на этом устройстве</button>
-    ${state.toast ? `<p class="save-status" role="status">${h(state.toast)}</p>` : ''}
-  </section>`;
+export function loadingState(text = 'Загружаем данные…') {
+  return `<div class="loading-state" role="status"><span class="loading-orbit" aria-hidden="true"></span>${h(text)}</div>`;
 }
 
-export function renderApp(state) {
-  const event = state.events.find(item => item.id === state.eventId);
-  return `<div class="app-shell"><header class="app-header"><a class="brand" href="#game"><span class="brand-symbol" aria-hidden="true">g<span>•</span></span><span>Игровые обновления<small>Первый интерфейс</small></span></a>
-    ${state.demoOnly ? '<span class="prototype-label">Прототип</span>' : `<label class="mode-select"><span class="sr-only">Источник данных</span><select id="data-mode"><option value="demo" ${state.mode === 'demo' ? 'selected' : ''}>Примеры</option><option value="lab" ${state.mode === 'lab' ? 'selected' : ''}>Лаборатория</option></select></label>`}</header>
-    <main id="main-content"><div class="mode-banner ${state.mode} ${state.mode === 'lab' && !state.loading && !state.error && state.lab?.healthy ? 'connected' : ''}"><span class="status-dot"></span><span>${state.mode === 'demo' ? 'Прототип. Патч 7.41f настоящий; остальные события выдуманы.' : state.loading ? 'Подключаю лабораторию…' : state.error ? 'Лаборатория недоступна. Примеры не подставляются.' : `Реальные билды · ${state.lab?.healthy ? 'система работает' : 'наблюдение требует проверки'}`}</span></div>
-    ${state.page === 'settings' ? settings(state) : event ? detail(state, event) : `<section class="game-hero" aria-labelledby="game-title"><div class="game-art"><img src="${h(new URL('./assets/dota2-logo.png', import.meta.url).href)}" alt="Оригинальный логотип Dota 2" width="128" height="128"></div>
-      <div class="game-heading"><span class="platform-label">Steam</span><h1 id="game-title" tabindex="-1">${h(state.game.name)}</h1><p>${h(state.game.subtitle)}</p><button type="button" class="notification-button" data-action="settings">${icon('bell')}Мои уведомления ${icon('arrow')}</button></div>
-      <div class="game-facts"><span>Публичный билд</span><strong>${h(state.mode === 'demo' ? 'Пример' : state.lab?.buildId || 'Нет данных')}</strong><small>${state.mode === 'lab' && state.lab?.observedAt ? `Замечен ${h(formatDate(state.lab.observedAt))}` : 'Описания дополнят ранний сигнал'}</small></div></section>
-      <nav class="event-tabs" aria-label="Разделы событий">${[['important', 'Важное'], ['all', 'Все события'], ['since', 'С прошлого визита']].map(([id, label]) => `<button type="button" data-tab="${id}" ${state.tab === id ? 'aria-current="page" class="active"' : ''}>${label}</button>`).join('')}<button type="button" class="refresh-button" data-action="refresh" aria-label="Обновить события" ${state.loading ? 'disabled' : ''}>${icon('refresh')}</button></nav>${feed(state)}`}
-    </main><footer class="app-footer"><span>Сначала Dota. Остальные игры — следующий этап.</span><span>${state.demoOnly ? 'Демонстрационный' : 'Локальный'} прототип · не сервис Valve</span></footer>
-    <nav class="bottom-nav" aria-label="Основная навигация"><a href="#game" ${state.page === 'game' ? 'aria-current="page"' : ''}>${icon('game')}<span>${h(state.game.name)}</span></a><a href="#settings" ${state.page === 'settings' ? 'aria-current="page"' : ''}>${icon('bell')}<span>Уведомления</span></a></nav></div>`;
+export function connectionScreen(error, config = {}) {
+  const isLogin = error.code === 'telegram_required';
+  const expired = ['auth_expired', 'invalid_auth'].includes(error.code);
+  const title = isLogin ? 'Откройте радар в Telegram' : expired ? 'Откройте приложение снова' : error.code === 'not_configured' ? 'Готовим подключение' : 'Домашний сервер недоступен';
+  return `<main id="main-content" tabindex="-1" class="connection-screen"><div class="connection-card"><a class="connection-brand" href="#home">Игровой радар</a><div class="empty-symbol">${icon(isLogin || expired ? 'inbox' : 'refresh')}</div><h1>${h(title)}</h1><p>${h(error.message || 'Не удалось подключиться к серверу.')}</p>${!isLogin && !expired ? '<p class="connection-explanation">Приложение получает данные с домашнего компьютера. Он должен быть включён, а сервер приложения — запущен. Открытая страница сама не запускает отслеживание.</p>' : '<p class="connection-explanation">Вход подтверждается Telegram. Библиотека и настройки будут доступны после открытия кнопкой в боте.</p>'}<div class="connection-actions">${externalLink(config.botURL, 'Открыть бота', 'button primary')}<button class="button secondary" type="button" data-action="retry">Попробовать снова</button></div></div></main>`;
+}
+
+export function deliveryControls(profile, config = {}) {
+  if (profile?.local_only !== false) return '';
+  const enabled = profile.telegram_delivery_enabled;
+  const canMessage = profile.telegram_can_message;
+  return `<div class="telegram-delivery"><div><h3>${enabled ? 'Уведомления в Telegram включены' : 'Уведомления в Telegram'}</h3><p>${enabled ? 'Новые события придут в чат с ботом по настройкам ваших игр.' : canMessage ? 'Можно получать выбранные события прямо в чат с ботом.' : 'Откройте бота и нажмите «Начать», чтобы он мог присылать вам сообщения.'}</p></div><div class="delivery-actions">${canMessage ? `<button class="button ${enabled ? 'secondary' : 'primary'}" type="button" data-action="delivery" data-enabled="${enabled ? 'false' : 'true'}">${enabled ? 'Отключить Telegram' : 'Получать в Telegram'}</button>` : `${externalLink(config.botURL, 'Открыть бота', 'button primary')}<button class="button secondary" type="button" data-action="write-access">Разрешить уведомления</button>`}</div></div>`;
+}
+
+export function addButton(game, library, compact = false) {
+  const added = library.some(item => Number(item.app_id) === Number(game.app_id));
+  return added ? `<a class="button ${compact ? 'small ' : ''}quiet in-library" href="#game/${game.app_id}" aria-label="Открыть ${h(game.name)} в библиотеке">${icon('check')}В библиотеке</a>` : `<button class="button ${compact ? 'small ' : ''}primary" type="button" data-action="add" data-app-id="${game.app_id}" aria-label="Добавить ${h(game.name)} в библиотеку">${icon('plus')}Добавить</button>`;
+}
+
+export function gameRow(game, library, { actions = true, preferences = false } = {}) {
+  const mode = MODES.find(item => item.id === game.preferences?.mode)?.name;
+  return `<div class="game-row"><a href="#game/${game.app_id}" class="game-row-main">${art(game)}<div class="game-row-copy"><h3>${h(game.name)}</h3><div class="row-meta"><span class="type-label">${game.type === 'dlc' ? 'DLC' : 'Игра'}</span>${preferences && mode ? `<span>${game.preferences.enabled ? h(mode) : 'Уведомления выключены'}</span>` : `<span>${h(coverageText(game))}</span>`}</div>${game.latest_event ? `<p>${h(publicationLanguage(game.latest_event).title)}</p>` : ''}</div></a>${actions ? `<div class="row-actions">${preferences ? `<a class="icon-button" href="#settings/${game.app_id}" aria-label="Настройки ${h(game.name)}">${icon('settings')}</a>` : addButton(game, library, true)}</div>` : ''}</div>`;
+}
+
+export function homePage(bootstrap, config = {}) {
+  const featured = bootstrap.featured || [];
+  const library = bootstrap.library || [];
+  const publications = latestPublications(featured).slice(0, 3);
+  return `${pageHeader('Главная', 'Последние публикации и игры, за которыми стоит следить.', '<a class="button secondary" href="#search">' + icon('search') + 'Найти игру</a>')}
+    ${deliveryControls(bootstrap.profile, config)}<section class="bulletin-section" aria-labelledby="bulletin-title"><div class="section-heading"><h2 id="bulletin-title">Из последних обновлений</h2><span class="subtle">Официальные источники</span></div>
+    ${publications.length ? `<div class="bulletin-grid">${publications.map((game, index) => `<article class="bulletin ${index === 0 ? 'bulletin-lead' : ''}">${art(game, '', index !== 0)}<div class="bulletin-body"><a class="bulletin-game" href="#game/${game.app_id}">${h(game.name)}</a><div class="event-meta"><span>${h(eventLabel(game.latest_event))}</span><time>${h(formatDate(game.latest_event.published_at || game.latest_event.sort_at))}</time></div><h3><a href="${eventRoute(game.latest_event)}">${h(publicationLanguage(game.latest_event).title)}</a></h3><p>${h(excerpt(publicationLanguage(game.latest_event).contents, index === 0 ? 215 : 120) || 'Откройте официальную публикацию и доступную историю игры.')}</p><a class="bulletin-link" href="${eventRoute(game.latest_event)}">Читать публикацию ${icon('external')}</a></div></article>`).join('')}</div>` : `<div class="inline-empty"><h3>Первые публикации появятся после проверки</h3><p>Можно уже выбрать игры и собрать библиотеку. Если источник недоступен, это будет видно на странице игры.</p></div>`}</section>
+    <div class="home-columns"><section class="featured-section" aria-labelledby="featured-title"><div class="section-heading"><h2 id="featured-title">Известные игры</h2><a class="text-link" href="#search">Открыть поиск</a></div><div class="game-list">${featured.map(game => gameRow(game, library)).join('') || '<p class="subtle">Подборка ещё не загружена. Найдите интересующую игру в поиске.</p>'}</div></section>
+    <section class="personal-section" aria-labelledby="personal-title"><div class="section-heading"><h2 id="personal-title">Ваша библиотека</h2><a class="text-link" href="#library">Открыть</a></div>${library.length ? `<div class="game-list compact-list">${library.slice(0, 4).map(game => gameRow(game, library, { actions: false, preferences: true })).join('')}</div>` : `<div class="library-invitation"><div class="empty-symbol">${icon('library')}</div><h3>Соберите свой список</h3><p>Добавьте игры, которые вам интересны. Для каждой можно выбрать собственный режим уведомлений.</p><a class="button primary" href="#search">${icon('plus')}Добавить первую игру</a></div>`}<div class="home-note"><span class="note-mark" aria-hidden="true">i</span><p>Сохраняем найденные события в историю. Ваши настройки определяют, о чём появится уведомление.</p></div></section></div>`;
+}
+
+export function searchPage(query = '', kind = 'game') {
+  return `${pageHeader('Поиск игр', 'Найдите игру в Steam и добавьте её в свою библиотеку.')}
+    <form id="search-form" class="search-form" role="search"><div class="search-field">${icon('search')}<label class="sr-only" for="search-input">Название игры или Steam AppID</label><input id="search-input" name="q" type="search" value="${h(query)}" placeholder="Название игры или Steam AppID" autocomplete="off" enterkeyhint="search"><button class="search-submit" type="submit" aria-label="Найти игру">Найти</button></div><fieldset class="type-filters"><legend class="sr-only">Тип приложения Steam</legend>${[['game', 'Игры'], ['dlc', 'DLC'], ['all', 'Всё']].map(([value, label]) => `<label><input type="radio" name="kind" value="${value}" ${value === kind ? 'checked' : ''}><span>${label}</span></label>`).join('')}</fieldset></form>
+    <div id="search-results" aria-live="polite">${query ? loadingState('Ищем в каталоге Steam…') : emptyState('Какая игра вас интересует?', 'Начните с названия. DLC можно искать отдельно или вместе с играми.')}</div>`;
+}
+
+export function searchResults(result, library) {
+  const games = result.games || [];
+  return `${result.notice ? `<div class="notice">${h(result.notice)}</div>` : ''}${result.status === 'partial' ? '<p class="source-warning">Каталог доступен частично. Если игры нет, попробуйте точное название или AppID.</p>' : ''}${games.length ? `<div class="section-heading search-results-heading"><h2>Результаты поиска</h2><span class="subtle">${games.length} найдено</span></div><div class="game-list search-list">${games.map(game => gameRow(game, library)).join('')}</div><p class="page-footnote">Игра в каталоге может иметь неполные источники обновлений. После добавления проверим, какие данные доступны.</p>` : emptyState('Ничего не найдено', 'Проверьте название, смените фильтр или укажите Steam AppID.')}`;
+}
+
+export function libraryPage(games) {
+  return `${pageHeader('Библиотека', 'Ваши игры и личные правила уведомлений.', '<a class="button primary" href="#search">' + icon('plus') + 'Добавить игру</a>')}${games.length ? `<div class="game-list library-list">${games.map(game => gameRow(game, games, { preferences: true })).join('')}</div><p class="page-footnote">Это ваш список отслеживания. Владеть игрой в Steam, чтобы добавить её сюда, не требуется.</p>` : emptyState('Здесь будут ваши игры', 'Добавьте одну или несколько игр. История общая, а режим уведомлений для каждой игры выбираете вы.', '<a class="button primary" href="#search">Найти первую игру</a>')}`;
+}
+
+export function eventCard(event, selected = false, preferred = 'ru') {
+  const isBuild = event.kind === 'public_build_changed';
+  const date = event.published_at || event.sort_at || event.detected_at;
+  const source = sourceLabel(event.source);
+  const language = publicationLanguage(event, preferred);
+  const languageControls = selected && !isBuild ? language.originalRussian ? '<p class="translation-note">Исходная публикация на русском.</p>' : `<div class="publication-language" role="group" aria-label="Язык публикации"><button class="language-button ${language.russian ? 'selected' : ''}" type="button" data-action="language" data-event-id="${h(event.id)}" data-language="ru" ${!language.translated ? 'disabled' : ''}>Русский</button><button class="language-button ${!language.russian ? 'selected' : ''}" type="button" data-action="language" data-event-id="${h(event.id)}" data-language="original">Оригинал</button></div><p class="translation-note">${language.russian ? 'Автоматический перевод. Термины и числа можно сверить с оригиналом.' : language.translated ? 'Исходный текст разработчика.' : event.translation_status === 'pending' ? 'Русский перевод готовится. Сейчас показываем оригинал.' : 'Русский перевод пока недоступен. Показываем оригинал.'}</p>${!language.translated && event.translation_status !== 'pending' && event.contents?.trim() ? `<button class="button small secondary translate-button" type="button" data-action="translate" data-event-id="${h(event.id)}">Перевести на русский</button>` : ''}` : '';
+  return `<article class="event-card ${selected ? 'event-selected' : ''}" id="event-${h(String(event.id).replace(/[^a-zA-Z0-9_-]/g, '_'))}"><div class="event-meta"><span class="event-kind ${isBuild ? 'is-build' : event.kind === 'official_news_published' ? 'is-news' : ''}">${h(eventLabel(event))}</span><time datetime="${h(date || '')}">${h(formatDate(date, isBuild))}</time>${event.baseline ? '<span class="archive-label">Из доступной истории</span>' : ''}</div><h3>${selected ? h(language.title) : `<a href="${eventRoute(event)}">${h(language.title)}</a>`}</h3>
+    ${languageControls}${isBuild ? `<p class="build-change">${h(event.old_build_id || 'Неизвестный билд')} <span aria-label="сменился на">→</span> ${h(event.new_build_id || 'Неизвестный билд')}</p><p class="subtle">Изменился публичный билд. По этому сигналу нельзя определить содержание и важность обновления.</p>` : selected ? `${language.contents ? `<div class="publication-text">${h(language.contents)}</div>` : '<p class="text-pending">Содержание пока не получено. Публикацию можно открыть у разработчика.</p>'}` : `<p class="event-excerpt">${h(excerpt(language.contents, 260) || 'Содержание пока не получено. Доступен заголовок и ссылка на публикацию.')}</p>`}
+    ${selected && language.russian && event.translation_truncated ? '<p class="notice">Перевод сокращён. Полный полученный текст доступен в разделе «Оригинал».</p>' : ''}${selected && event.contents_truncated ? '<p class="notice">Исходный текст сокращён; полная публикация доступна по ссылке на источник ниже.</p>' : ''}<div class="event-footer">${selected || isBuild ? '' : `<a class="text-link" href="${eventRoute(event)}">Читать полностью</a>`}${externalLink(event.url, source, 'source-link')}${selected ? `<a class="text-link close-event" href="#game/${event.app_id}">Свернуть</a>` : ''}</div>${selected && event.detected_at ? `<p class="event-detected">Сохранено ${h(formatDate(event.detected_at, true))}${event.severity ? ' · Категория: ' + h({ major: 'крупное', medium: 'среднее', minor: 'мелкое' }[event.severity] || event.severity) : ''}</p>` : ''}</article>`;
+}
+
+export function gamePage(data, library, eventId = null, paginationLoading = false, languages = {}) {
+  const { game, events = [], pagination = {} } = data;
+  const added = library.some(item => Number(item.app_id) === Number(game.app_id));
+  const selectedFound = eventId && events.some(event => String(event.id) === eventId);
+  return `<a class="back-link" href="#library">${icon('arrow')}Библиотека</a><section class="game-heading"><div class="game-heading-copy"><span class="type-label">${game.type === 'dlc' ? 'Дополнение DLC' : 'Игра Steam'}</span><h1>${h(game.name)}</h1><div class="game-heading-actions">${addButton(game, library)}${added ? `<a class="button secondary" href="#settings/${game.app_id}">${icon('settings')}Настройки</a>` : ''}${externalLink(game.store_url, 'В Steam', 'text-link')}</div>${game.type === 'dlc' ? `<p class="parent-game">У дополнения может не быть собственной ленты обновлений. При необходимости добавьте ${game.parent_app_id ? `<a href="#game/${game.parent_app_id}">основную игру</a>` : 'основную игру'}.</p>` : ''}</div>${art(game, 'game-heading-art', false)}</section>
+    <div class="coverage-bar"><div><span class="coverage-status status-${h(game.poll_status || 'awaiting')}"><i class="status-dot ${game.poll_status === 'ready' ? 'is-running' : ''}"></i>${h(coverageText(game))}</span>${game.last_polled_at ? `<small>Последняя проверка: ${h(formatDate(game.last_polled_at, true))}</small>` : '<small>Первые данные могут появиться не сразу.</small>'}${!added && !game.seed ? '<small>Добавьте игру в библиотеку, чтобы запустить проверку.</small>' : ''}</div><button class="button small secondary" type="button" data-action="refresh" data-app-id="${game.app_id}" ${!added && !game.seed ? 'disabled title="Сначала добавьте игру в библиотеку"' : ''}>${icon('refresh')}Проверить</button></div>
+    <div class="section-heading timeline-heading"><h2>История событий</h2>${game.build_id ? `<span class="subtle">Публичный билд ${h(game.build_id)}</span>` : ''}</div><p class="timeline-intro">Публикации разработчика и замеченные изменения билдов. Для этой игры сохраняем доступные данные; полная история Steam может быть недоступна.</p>
+    ${eventId && !selectedFound ? '<div class="notice">Этого события ещё нет на загруженной странице. Загрузите следующую часть истории ниже.</div>' : ''}
+    <div class="timeline">${events.length ? events.map(event => eventCard(event, String(event.id) === eventId, languages[String(event.id)] || 'ru')).join('') : emptyState(game.poll_status === 'awaiting' ? 'Ожидаем первую проверку' : 'Сохранённых событий пока нет', game.poll_status === 'awaiting' ? 'Игра добавлена в очередь. Можно настроить уведомления; история появится после получения данных.' : 'Источник ещё не дал доступных событий. Попробуйте проверить игру снова.')}</div>
+    ${pagination.has_more ? `<div class="load-more"><button class="button secondary" type="button" data-action="more" ${paginationLoading ? 'disabled' : ''}>${paginationLoading ? 'Загружаем…' : 'Ещё из истории'}</button></div>` : ''}`;
+}
+
+export function settingsPage(game) {
+  const prefs = { ...DEFAULT_PREFS, ...game.preferences };
+  return `<a class="back-link" href="#game/${game.app_id}">${icon('arrow')}${h(game.name)}</a>${pageHeader('Настройки уведомлений', 'Для ' + game.name)}
+    <form id="preferences-form" class="preferences-form" data-app-id="${game.app_id}"><section class="settings-section"><label class="switch-row"><div><strong>Получать уведомления</strong><p>Выключение сохраняет игру в библиотеке и не скрывает историю.</p></div><input name="enabled" type="checkbox" ${prefs.enabled ? 'checked' : ''}><span class="switch-visual" aria-hidden="true"></span></label></section>
+    <section class="settings-section"><h2>Что присылать</h2><div class="mode-grid">${MODES.map(mode => `<label class="mode-option"><input type="radio" name="mode" value="${mode.id}" ${prefs.mode === mode.id ? 'checked' : ''}><div><strong>${h(mode.name)}${mode.id === 'updates' ? '<span class="recommended-label">Рекомендуем</span>' : ''}</strong><p>${h(mode.text)}</p></div></label>`).join('')}</div>
+    <div id="custom-types" class="custom-types" ${prefs.mode !== 'custom' ? 'hidden' : ''}><h3>Типы событий</h3>${[['patches', 'Патчи и исправления'], ['news', 'Официальные новости'], ['builds', 'Новые публичные билды']].map(([name, label]) => `<label class="check-row"><input type="checkbox" name="${name}" ${prefs[name] ? 'checked' : ''}><span>${label}</span></label>`).join('')}</div>
+    <div id="severity-note" class="notice severity-note" ${!['major', 'medium', 'minor'].includes(prefs.mode) ? 'hidden' : ''}>Классификация по крупности ещё не работает: у текущих публикаций категория неизвестна. Без неоценённых публикаций уведомления в этом режиме пока не придут.</div>
+    <label class="check-row unknown-option"><input type="checkbox" name="include_unknown" ${prefs.include_unknown ? 'checked' : ''}><div><strong>Включать публикации без оценки крупности</strong><p>В режимах «крупные», «средние» и «мелкие» они придут дополнительно к выбранной категории. Это не означает, что они относятся к ней.</p></div></label>
+    <div id="noise-warning" class="notice noise-warning" ${prefs.mode !== 'all' && !(prefs.mode === 'custom' && prefs.builds) ? 'hidden' : ''}>Возможны частые уведомления. Новый билд может оказаться техническим изменением без понятного игроку содержания.</div></section>
+    <section class="settings-section"><h2>Когда присылать</h2><label class="timing-option"><input name="timing" type="radio" value="described" ${prefs.timing === 'described' ? 'checked' : ''}><div><strong>Когда есть описание разработчика</strong><p>Пропускаем технические билды. Публикации без текста ждут последующей проверки. Если текст не появится, уведомления не будет. Полноту информации этот режим не гарантирует.</p></div></label><label class="timing-option"><input name="timing" type="radio" value="fast" ${prefs.timing === 'fast' ? 'checked' : ''}><div><strong>Сразу после обнаружения</strong><p>Показываем выбранные типы событий с доступными на тот момент данными. Содержание может появиться позже.</p></div></label><p id="build-timing-note" class="subtle" ${(prefs.mode !== 'all' && !prefs.builds) || prefs.timing !== 'described' ? 'hidden' : ''}>Билды выбраны, но в режиме «Когда есть описание разработчика» уведомления о них пропускаются.</p></section>
+    <div class="settings-save"><div id="preferences-message" role="status" aria-live="polite"></div><button class="button primary" type="submit">Сохранить настройки</button></div></form><div class="remove-game"><button class="button danger" type="button" data-action="remove" data-app-id="${game.app_id}">Убрать из библиотеки</button><p>Уведомления по этой игре прекратятся. Сохранённая история останется доступна; игру можно добавить снова.</p></div>`;
+}
+
+export function inboxPage(result, profile = {}, config = {}) {
+  const deliveryText = profile.local_only === false ? profile.telegram_delivery_enabled ? 'Новые уведомления также отправляются в Telegram. История сообщений остаётся здесь.' : 'Уведомления сохраняются здесь. Доставку в Telegram можно включить по своему выбору.' : 'Уведомления этого локального профиля приходят сюда. Для доставки в Telegram откройте приложение через бота.';
+  return `${pageHeader('Уведомления', 'События, которые прошли ваши настройки.', result.unread_count ? '<button class="button secondary" type="button" data-action="read">Отметить прочитанными</button>' : '')}${deliveryControls(profile, config)}<div class="delivery-note"><span class="note-mark" aria-hidden="true">i</span><p>${h(deliveryText)}</p></div>${result.items?.length ? `<div class="inbox-list">${result.items.map(item => `<article class="inbox-item ${item.read ? '' : 'is-unread'}"><div class="inbox-marker" aria-hidden="true"></div><div class="inbox-content"><div class="event-meta"><a class="inbox-game" href="#game/${item.event.app_id}">${h(item.event.game_name)}</a><time>${h(formatDate(item.created_at, true))}</time></div><h2><a href="${eventRoute(item.event)}">${h(publicationLanguage(item.event).title)}</a></h2><p>${h(excerpt(publicationLanguage(item.event).contents, 180) || (item.event.kind === 'public_build_changed' ? 'Замечено изменение публичного билда.' : 'Откройте публикацию для подробностей.'))}</p><div class="inbox-reason">${icon('settings')}<span>${h(item.reason || 'Соответствует настройкам игры.')}</span><a href="#settings/${item.event.app_id}">Изменить</a></div></div></article>`).join('')}</div>` : emptyState('Пока тихо', 'Новые события появятся здесь после обнаружения, если они подходят под ваши настройки. Старые публикации при добавлении игры не считаются новыми уведомлениями.', '<a class="button secondary" href="#library">Посмотреть библиотеку</a>')}`;
 }
