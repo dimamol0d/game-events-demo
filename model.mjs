@@ -1,12 +1,16 @@
-export const DEFAULT_PREFS = Object.freeze({ enabled: true, mode: 'updates', patches: true, builds: false, news: false, include_unknown: true, timing: 'described' });
+export const DEFAULT_PREFS = Object.freeze({ enabled: true, mode: 'updates', patches: true, builds: false, news: false, include_unknown: true, timing: 'fast' });
 export const MODES = Object.freeze([
-  { id: 'updates', name: 'Обновления', text: 'Официальные патчи и исправления. Обычные новости и технические билды остаются в истории.' },
-  { id: 'major', name: 'Только крупные', text: 'Обновления, которым присвоена категория «крупное». Неоценённые публикации — по переключателю ниже.' },
-  { id: 'medium', name: 'Средние', text: 'Обновления с категорией «среднее». Неоценённые публикации — по переключателю ниже.' },
-  { id: 'minor', name: 'Мелкие', text: 'Небольшие патчи и исправления с категорией «мелкое». Неоценённые публикации — по переключателю ниже.' },
-  { id: 'all', name: 'Всё подряд', text: 'Обновления, новости и новые публичные билды. В активных играх сообщений может быть много.' },
-  { id: 'custom', name: 'Свои правила', text: 'Выберите типы событий самостоятельно. Несколько технических билдов могут выйти за один день.' },
+  { id: 'major', name: 'Только важное', text: 'Новый контент и крупные изменения, явно описанные разработчиком. Обновления с неизвестной важностью — по переключателю ниже.' },
+  { id: 'updates', name: 'Все обновления', text: 'Изменения самой игры: новый контент, баланс и исправления. Анонсы и изменения файлов без описания остаются в истории.' },
+  { id: 'all', name: 'Всё подряд', text: 'Обновления, анонсы и изменения файлов игры. Сообщений может быть много; для самых ранних сигналов выберите «Сразу после обнаружения».' },
+  { id: 'custom', name: 'Настроить вручную', text: 'Выберите, о каких событиях сообщать. Изменение файлов само по себе не объясняет, что изменилось для игрока.' },
+  { id: 'medium', name: 'Средние (прежний режим)', text: 'Сохранён ваш прежний выбор. Среднюю важность пока надёжно не определяем; обновления без оценки придут только с переключателем ниже.', legacy: true },
+  { id: 'minor', name: 'Небольшие изменения (прежний режим)', text: 'Исправления и небольшие изменения, явно описанные разработчиком. Обновления без оценки — по переключателю ниже.', legacy: true },
 ]);
+
+export function modesForPreferences(preferences = DEFAULT_PREFS) {
+  return MODES.filter(mode => !mode.legacy || mode.id === preferences.mode);
+}
 
 export function escapeHTML(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -42,7 +46,12 @@ export function eventRoute(event) {
 export function mergeEvents(current = [], incoming = []) {
   const events = new Map();
   for (const event of [...current, ...incoming]) events.set(String(event.id), event);
-  return [...events.values()];
+  const related = new Set();
+  for (const event of events.values()) {
+    if (!event.release_id || !Array.isArray(event.related_events)) continue;
+    for (const item of event.related_events) if (item?.id != null && String(item.id) !== String(event.id)) related.add(String(item.id));
+  }
+  return [...events.values()].filter(event => !related.has(String(event.id)));
 }
 
 export function formatDate(value, withTime = false) {
@@ -52,6 +61,7 @@ export function formatDate(value, withTime = false) {
 }
 
 export function eventLabel(event) {
+  if (event.understanding) return ({ update: 'Обновление игры', announcement: 'Анонс или новость', unknown: 'Тип пока не определён', build: 'Изменились файлы игры' })[event.understanding.category] || 'Публикация';
   return ({ official_update_published: 'Обновление', official_news_published: 'Публикация', public_build_changed: 'Новый билд' })[event.kind] || 'Событие';
 }
 
@@ -63,8 +73,28 @@ export function excerpt(text, length = 190) {
 export function preferencesForMode(mode, previous = DEFAULT_PREFS) {
   const prefs = { ...DEFAULT_PREFS, ...previous, mode };
   if (!MODES.some(item => item.id === mode)) return { ...prefs, mode: 'updates' };
-  if (mode !== 'custom') return { ...prefs, patches: true, builds: mode === 'all', news: mode === 'all', include_unknown: ['major', 'medium', 'minor'].includes(mode) ? false : prefs.include_unknown };
+  if (mode !== 'custom') return { ...prefs, patches: true, builds: mode === 'all', news: mode === 'all', include_unknown: mode === 'major' ? true : ['medium', 'minor'].includes(mode) ? false : prefs.include_unknown };
   return prefs;
+}
+
+export function eventUnderstanding(event, preferred = 'ru') {
+  const language = publicationLanguage(event, preferred);
+  const original = event.understanding || {};
+  const localized = language.russian && event.understanding_ru ? event.understanding_ru : original;
+  const summary = Array.isArray(localized.summary_points) ? localized.summary_points.filter(point => typeof point === 'string' && point.trim()).slice(0, 4) : [];
+  const importanceLevel = original.importance || ({ major: 'important', minor: 'routine' })[original.severity] || 'unknown';
+  const importance = ({ important: 'Важное обновление', routine: 'Небольшие изменения' })[importanceLevel] || 'Важность пока неизвестна';
+  return { ...original, summary_points: summary, importance_label: importance, importance_level: importanceLevel,
+    summary_original: summary.length > 0 && !language.originalRussian && !(language.russian && event.understanding_ru),
+    category_reason_ru: original.category_reason_ru || '', severity_reason_ru: original.importance_reason_ru || original.severity_reason_ru || '',
+    version_labels: Array.isArray(original.version_labels) ? original.version_labels : [],
+    explicit_build_ids: Array.isArray(original.explicit_build_ids) ? original.explicit_build_ids : [],
+    change_types: Array.isArray(original.change_types) ? original.change_types : [] };
+}
+
+export function eventMatchesId(event, eventId) {
+  if (!eventId) return false;
+  return String(event.id) === String(eventId) || Array.isArray(event.related_events) && event.related_events.some(item => item?.id != null && String(item.id) === String(eventId));
 }
 
 export function coverageText(game) {

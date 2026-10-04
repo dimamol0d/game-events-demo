@@ -280,7 +280,46 @@ input[type=radio], input[type=checkbox] { accent-color: #416eaa; width: 18px; he
 .language-button:disabled { cursor: not-allowed; opacity: .5; }
 .translation-note { color: var(--muted); font-size: .77rem; line-height: 1.55; margin-bottom: 20px; max-width: 75ch; }
 .translate-button { margin: -8px 0 22px; }
+.delivery-copy { min-width: 0; }
+.delivery-disabled { border-left-color: #c89451; }
+.delivery-badge { display: inline-block; font-size: .71rem; font-weight: 600; background: var(--subtle-surface); color: var(--muted); border-radius: 4px; padding: 4px 7px; margin-left: 7px; }
+.delivery-enabled .delivery-badge { color: #37664e; background: #e3f2eb; }
+.telegram-delivery .delivery-status { margin-top: 8px; font-size: .73rem; }
+.telegram-delivery .delivery-warning { margin-top: 10px; color: #8a552c; }
+.delivery-actions { flex-shrink: 1; max-width: 290px; }
+.delivery-actions small { display: block; flex-basis: 100%; font-size: .7rem; color: var(--muted); line-height: 1.5; }
+.change-summary { margin: 20px 0; max-width: 78ch; }
+.change-summary h4, .full-publication-label { font-size: .89rem; font-weight: 650; margin: 0 0 12px; }
+.change-summary ul { margin: 0 0 13px; padding-left: 20px; }
+.change-summary li { line-height: 1.6; font-size: .9rem; overflow-wrap: anywhere; padding-left: 3px; }
+.change-summary li + li { margin-top: 7px; }
+.change-summary .summary-basis { font-size: .74rem; color: var(--muted); line-height: 1.55; margin: 0; }
+.summary-compact { margin: 15px 0 20px; }
+.summary-compact li { font-size: .82rem; }
+.summary-compact .summary-basis { font-size: .7rem; }
+.event-evidence { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 18px; }
+.event-evidence:empty { display: none; }
+.importance-label, .change-tag { display: inline-flex; align-items: center; font-size: .71rem; line-height: 1.4; padding: 4px 7px; border-radius: 4px; background: var(--subtle-surface); color: var(--muted); }
+.importance-major { color: #37664e; background: #e3f2eb; font-weight: 600; }
+.classification-explanation, .related-sources { margin: 18px 0; max-width: 78ch; color: var(--muted); font-size: .8rem; line-height: 1.6; }
+.classification-explanation summary, .related-sources summary { cursor: pointer; color: var(--ink); font-weight: 600; padding: 5px 0; }
+.classification-explanation p, .related-sources p { margin: 9px 0 0; }
+.related-sources ul { padding-left: 20px; margin: 10px 0 0; }
+.related-sources li + li { margin-top: 7px; }
+.related-sources .source-link { overflow-wrap: anywhere; }
+.full-publication-label { padding-top: 21px; border-top: 1px solid var(--line); margin-top: 22px; }
+.build-change .build-id-label { color: var(--muted); font-size: .77rem; font-weight: 400; margin: 0; }
+.bulletin .change-summary li { color: #d0dbe5; }
+.bulletin .change-summary h4 { color: #f1f5f8; font-size: .79rem; }
+.bulletin .change-summary .summary-basis { color: #bdcad8; }
+.bulletin .event-evidence { margin-bottom: 12px; }
+.bulletin .change-tag, .bulletin .importance-label { background: #344b59; color: #d0dbe5; }
+.bulletin .importance-major { background: #2d4b42; color: #a2dcc5; }
+.bulletin .event-excerpt { color: #bdcad8; }
+.inbox-content .summary-basis { margin-bottom: 0; }
 html[data-theme=dark] { --paper: #17212d; --surface: #223244; --ink: #f1f5f8; --muted: #becada; --line: #3b4b5d; --subtle-surface: #2c3e50; --focus: #96b5f8; color-scheme: dark; }
+html[data-theme=dark] .importance-major, html[data-theme=dark] .delivery-enabled .delivery-badge { background: #2d4b42; color: #a2dcc5; }
+html[data-theme=dark] .telegram-delivery .delivery-warning { color: #edcfac; }
 html[data-theme=dark] .mode-option:has(input:checked) { background: #2c3e50; }
 html[data-theme=dark] .button.secondary { border-color: #59718b; }
 html[data-theme=dark] .text-link, html[data-theme=dark] .source-link, html[data-theme=dark] .inbox-game, html[data-theme=dark] .inbox-reason a { color: #96b5f8; }
@@ -420,6 +459,9 @@ html[data-theme=dark] .button.danger { color: #f2bcb0; border-color: #996c61; }
   .toast { bottom: calc(88px + max(env(safe-area-inset-bottom), var(--tg-inset-bottom, 0px))); left: 50%; max-width: calc(100vw - 32px); width: max-content; padding: 14px 18px; }
   .telegram-delivery { display: block; padding: 20px; }
   .delivery-actions { margin-top: 17px; }
+  .delivery-actions { max-width: none; }
+  .change-summary li { font-size: .84rem; }
+  .change-summary .summary-basis { font-size: .7rem; }
   .connection-card { padding: 25px; }
   .connection-card h1 { font-size: 1.75rem; }
   .connection-screen { padding-top: 28px; padding-bottom: 28px; }

@@ -1,5 +1,5 @@
 import { api, ApiError } from './api.mjs?v=20261004-reconnect';
-import { parseRoute, mergeEvents, preferencesForMode } from './model.mjs';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId } from './model.mjs';
 import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs';
 import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs';
 import { loadRuntimeConfig } from './config.mjs?v=20261004-reconnect';
@@ -62,14 +62,15 @@ function renderGame({ focus = false, loadingMore = false } = {}) {
   if (!state.game || state.game.game.app_id !== state.route.appId) return;
   setMain(gamePage(state.game, state.bootstrap.library, state.route.eventId, loadingMore, state.languages), focus);
   if (focus && state.route.eventId) {
-    const id = String(state.route.eventId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const selected = state.game.events.find(item => eventMatchesId(item, state.route.eventId));
+    const id = String(selected?.id || state.route.eventId).replace(/[^a-zA-Z0-9_-]/g, '_');
     document.getElementById('event-' + id)?.scrollIntoView({ block: 'start' });
   }
   queueSelectedTranslation();
 }
 
 function queueSelectedTranslation() {
-  const event = state.game?.events.find(item => String(item.id) === state.route.eventId);
+  const event = state.game?.events.find(item => eventMatchesId(item, state.route.eventId));
   if (!event || translationRequested.has(String(event.id)) || event.kind === 'public_build_changed'
     || event.translation_status === 'ready' || String(event.original_language || '').toLowerCase().startsWith('ru') || !event.contents?.trim()) return;
   translationRequested.add(String(event.id));
@@ -104,7 +105,7 @@ function scheduleGamePoll(epoch, delay = 4500) {
     if (epoch !== navigationEpoch || document.hidden || state.route.page !== 'game') return;
     const appId = state.route.appId;
     try {
-      const index = state.game.events.findIndex(item => String(item.id) === state.route.eventId);
+      const index = state.game.events.findIndex(item => eventMatchesId(item, state.route.eventId));
       const selectedOffset = Math.floor(Math.max(0, index) / 30) * 30;
       const [fresh, selectedPage] = await Promise.all([api.game(appId), selectedOffset ? api.game(appId, selectedOffset) : Promise.resolve(null)]);
       if (epoch !== navigationEpoch) return;
@@ -124,7 +125,8 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
   if (!state.bootstrap || !['home', 'library', 'inbox'].includes(state.route.page) || document.hidden) return;
   const games = [...state.bootstrap.library, ...state.bootstrap.featured];
   const pending = games.some(game => game.poll_status === 'awaiting' || game.latest_event?.translation_status === 'pending')
-    || state.route.page === 'inbox' && state.notifications?.items?.some(item => item.event.translation_status === 'pending');
+    || state.route.page === 'inbox' && state.notifications?.items?.some(item => item.event.translation_status === 'pending')
+    || Number(state.bootstrap.delivery_status?.pending_count) > 0;
   if (!pending) return;
   overviewPollTimer = setTimeout(async () => {
     if (epoch !== navigationEpoch || document.hidden) return;
@@ -133,13 +135,13 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
       if (epoch !== navigationEpoch) return;
       const scroll = window.scrollY;
       if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-      else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library));
+      else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
       else if (state.route.page === 'inbox') {
         const result = await api.notifications();
         if (epoch !== navigationEpoch) return;
         state.notifications = result;
         updateUnread(result.unread_count);
-        setMain(inboxPage(result, state.bootstrap.profile, state.config));
+        setMain(inboxPage(result, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
       }
       window.scrollTo({ top: scroll, behavior: 'instant' });
       scheduleOverviewPoll(epoch, Math.min(delay * 1.5, 20000));
@@ -175,9 +177,9 @@ async function loadRoute({ focus = true, force = false } = {}) {
     return;
   }
   if (route.page === 'library') {
-    setMain(libraryPage(state.bootstrap.library), focus);
+    setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status), focus);
     if (force || Date.now() - bootstrapUpdatedAt > 5000) {
-      try { await syncBootstrap(); if (epoch === navigationEpoch) setMain(libraryPage(state.bootstrap.library)); }
+      try { await syncBootstrap(); if (epoch === navigationEpoch) setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status)); }
       catch (error) { if (epoch === navigationEpoch) setMain(errorState(error.message)); }
     }
     scheduleOverviewPoll(epoch);
@@ -195,7 +197,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
       if (epoch !== navigationEpoch) return;
       state.notifications = result;
       updateUnread(result.unread_count);
-      setMain(inboxPage(result, state.bootstrap.profile, state.config));
+      setMain(inboxPage(result, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
       scheduleOverviewPoll(epoch);
     } else {
       const result = await api.game(route.appId);
@@ -248,7 +250,7 @@ function renderAfterLibraryChange() {
     const region = document.querySelector('#search-results');
     if (region && state.search.result) region.innerHTML = searchResults(state.search.result, state.bootstrap.library);
   } else if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-  else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library));
+  else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
   else if (state.route.page === 'game') renderGame();
 }
 
@@ -289,8 +291,17 @@ document.addEventListener('click', async event => {
     await api.setTelegramDelivery(enabled);
     await syncBootstrap();
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-    if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config));
+    if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
     toast(enabled ? 'Уведомления в Telegram включены.' : 'Уведомления в Telegram выключены.');
+  });
+  else if (action === 'delivery-test') await mutateButton(button, 'delivery-test', async () => {
+    const result = await api.testTelegramDelivery();
+    await syncBootstrap();
+    if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
+    if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    toast(result.message || 'Проверка доставки запрошена. Посмотрите чат с ботом.');
   });
   else if (action === 'write-access') await mutateButton(button, 'delivery', async () => {
     const allowed = await telegram.requestWriteAccess();
@@ -301,7 +312,8 @@ document.addEventListener('click', async event => {
     await syncBootstrap();
     toast('Уведомления в Telegram включены.');
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-    if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config));
+    if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
   });
   else if (action === 'add') await mutateButton(button, 'add-' + appId, async () => {
     const result = await api.add(appId);
@@ -338,7 +350,8 @@ document.addEventListener('click', async event => {
     renderGame();
     window.scrollTo({ top: scroll, behavior: 'instant' });
     if (state.route.eventId) {
-      const id = String(state.route.eventId).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const selected = state.game.events.find(item => eventMatchesId(item, state.route.eventId));
+      const id = String(selected?.id || state.route.eventId).replace(/[^a-zA-Z0-9_-]/g, '_');
       document.getElementById('event-' + id)?.scrollIntoView({ block: 'start' });
     }
   });
@@ -346,7 +359,7 @@ document.addEventListener('click', async event => {
     await api.markRead();
     updateUnread(0);
     if (state.notifications) state.notifications = { ...state.notifications, unread_count: 0, items: state.notifications.items.map(item => ({ ...item, read: true })) };
-    if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config));
+    if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
     toast('Уведомления отмечены прочитанными.');
   });
 });
@@ -364,6 +377,7 @@ function syncPreferenceNotes(form) {
   const mode = form.elements.mode.value;
   form.querySelector('#custom-types').hidden = mode !== 'custom';
   form.querySelector('#severity-note').hidden = !['major', 'medium', 'minor'].includes(mode);
+  form.querySelector('#unknown-option').hidden = !['major', 'medium', 'minor'].includes(mode);
   const builds = mode === 'all' || (mode === 'custom' && form.elements.builds.checked);
   form.querySelector('#noise-warning').hidden = !builds;
   form.querySelector('#build-timing-note').hidden = !builds || form.elements.timing.value !== 'described';
