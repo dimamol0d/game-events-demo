@@ -19,11 +19,20 @@ export function resolveConfig(value = {}, pageURL = globalThis.location?.href) {
   return { backendURL, botURL, remote: Boolean(backendURL && backendURL !== page.origin) || !localPage, configured: Boolean(backendURL) || localPage };
 }
 
-export async function loadRuntimeConfig(fetchImpl = globalThis.fetch, pageURL = globalThis.location?.href) {
-  const response = await fetchImpl(new URL('./runtime-config.json', pageURL).href, { cache: 'no-store', credentials: 'omit' });
-  if (!response.ok) {
-    if (LOOPBACK.has(new URL(pageURL).hostname)) return resolveConfig({}, pageURL);
+export async function loadRuntimeConfig(fetchImpl = globalThis.fetch, pageURL = globalThis.location?.href, { timeoutMs = 10000, clock = Date.now } = {}) {
+  const url = new URL('./runtime-config.json', pageURL);
+  url.searchParams.set('_radar', String(clock()));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetchImpl(url.href, { cache: 'no-store', credentials: 'omit', signal: controller.signal });
+    if (!response.ok) {
+      if (LOOPBACK.has(new URL(pageURL).hostname)) return resolveConfig({}, pageURL);
+      throw new Error('Не удалось загрузить адрес домашнего сервера. Повторите попытку.');
+    }
+    return resolveConfig(await response.json(), pageURL);
+  } catch (error) {
+    if (error?.message === 'Адрес сервера приложения настроен неправильно.') throw error;
     throw new Error('Не удалось загрузить адрес домашнего сервера. Повторите попытку.');
-  }
-  return resolveConfig(await response.json(), pageURL);
+  } finally { clearTimeout(timeout); }
 }

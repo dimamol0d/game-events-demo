@@ -1,8 +1,8 @@
-import { api, ApiError } from './api.mjs';
+import { api, ApiError } from './api.mjs?v=20261004-reconnect';
 import { parseRoute, mergeEvents, preferencesForMode } from './model.mjs';
 import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs';
 import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs';
-import { loadRuntimeConfig } from './config.mjs';
+import { loadRuntimeConfig } from './config.mjs?v=20261004-reconnect';
 
 const appRoot = document.querySelector('#app');
 const toastElement = document.querySelector('#toast');
@@ -439,7 +439,7 @@ async function start() {
       telegram.init();
       setMain(loadingState('Подтверждаем профиль Telegram…'));
     }
-    api.configure(state.config, telegram.rawInitData);
+    api.configure(state.config, telegram.rawInitData, () => loadRuntimeConfig());
     await syncBootstrap();
     appRoot.innerHTML = shell(state.route, state.bootstrap);
     telegram.init();
