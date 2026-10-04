@@ -57,7 +57,7 @@ export function loadingState(text = 'Загружаем данные…') {
 export function connectionScreen(error, config = {}) {
   const isLogin = error.code === 'telegram_required';
   const expired = ['auth_expired', 'invalid_auth'].includes(error.code);
-  const title = isLogin ? 'Откройте радар в Telegram' : expired ? 'Откройте приложение снова' : error.code === 'not_configured' ? 'Готовим подключение' : 'Домашний сервер недоступен';
+  const title = isLogin ? 'Откройте радар в Telegram' : expired ? 'Откройте приложение снова' : error.code === 'not_configured' ? 'Готовим подключение' : error.code === 'telegram_unavailable' ? 'Не удалось подключить Telegram' : ['offline', 'timeout', 'invalid_response'].includes(error.code) ? 'Домашний сервер недоступен' : 'Не удалось открыть приложение';
   return `<main id="main-content" tabindex="-1" class="connection-screen"><div class="connection-card"><a class="connection-brand" href="#home">Игровой радар</a><div class="empty-symbol">${icon(isLogin || expired ? 'inbox' : 'refresh')}</div><h1>${h(title)}</h1><p>${h(error.message || 'Не удалось подключиться к серверу.')}</p>${!isLogin && !expired ? '<p class="connection-explanation">Приложение получает данные с домашнего компьютера. Он должен быть включён, а сервер приложения — запущен. Открытая страница сама не запускает отслеживание.</p>' : '<p class="connection-explanation">Вход подтверждается Telegram. Библиотека и настройки будут доступны после открытия кнопкой в боте.</p>'}<div class="connection-actions">${externalLink(config.botURL, 'Открыть бота', 'button primary')}<button class="button secondary" type="button" data-action="retry">Попробовать снова</button></div></div></main>`;
 }
 

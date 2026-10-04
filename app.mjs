@@ -1,4 +1,4 @@
-import { api } from './api.mjs';
+import { api, ApiError } from './api.mjs';
 import { parseRoute, mergeEvents, preferencesForMode } from './model.mjs';
 import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs';
 import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs';
@@ -14,6 +14,7 @@ let searchTimer;
 let searchController;
 let toastTimer;
 let gamePollTimer;
+let overviewPollTimer;
 let bootstrapUpdatedAt = 0;
 const mutations = new Set();
 const translationRequested = new Set();
@@ -98,9 +99,9 @@ async function requestTranslation(event) {
 
 function scheduleGamePoll(epoch, delay = 4500) {
   clearTimeout(gamePollTimer);
-  if (state.route.page !== 'game' || !state.game || (state.game.game.poll_status !== 'awaiting' && !state.game.events.some(event => event.translation_status === 'pending'))) return;
+  if (document.hidden || state.route.page !== 'game' || !state.game || (state.game.game.poll_status !== 'awaiting' && !state.game.events.some(event => event.translation_status === 'pending'))) return;
   gamePollTimer = setTimeout(async () => {
-    if (epoch !== navigationEpoch || state.route.page !== 'game') return;
+    if (epoch !== navigationEpoch || document.hidden || state.route.page !== 'game') return;
     const appId = state.route.appId;
     try {
       const index = state.game.events.findIndex(item => String(item.id) === state.route.eventId);
@@ -118,8 +119,37 @@ function scheduleGamePoll(epoch, delay = 4500) {
   }, delay);
 }
 
+function scheduleOverviewPoll(epoch, delay = 5000) {
+  clearTimeout(overviewPollTimer);
+  if (!state.bootstrap || !['home', 'library', 'inbox'].includes(state.route.page) || document.hidden) return;
+  const games = [...state.bootstrap.library, ...state.bootstrap.featured];
+  const pending = games.some(game => game.poll_status === 'awaiting' || game.latest_event?.translation_status === 'pending')
+    || state.route.page === 'inbox' && state.notifications?.items?.some(item => item.event.translation_status === 'pending');
+  if (!pending) return;
+  overviewPollTimer = setTimeout(async () => {
+    if (epoch !== navigationEpoch || document.hidden) return;
+    try {
+      await syncBootstrap();
+      if (epoch !== navigationEpoch) return;
+      const scroll = window.scrollY;
+      if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
+      else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library));
+      else if (state.route.page === 'inbox') {
+        const result = await api.notifications();
+        if (epoch !== navigationEpoch) return;
+        state.notifications = result;
+        updateUnread(result.unread_count);
+        setMain(inboxPage(result, state.bootstrap.profile, state.config));
+      }
+      window.scrollTo({ top: scroll, behavior: 'instant' });
+      scheduleOverviewPoll(epoch, Math.min(delay * 1.5, 20000));
+    } catch { if (epoch === navigationEpoch) scheduleOverviewPoll(epoch, 20000); }
+  }, delay);
+}
+
 async function loadRoute({ focus = true, force = false } = {}) {
   clearTimeout(gamePollTimer);
+  clearTimeout(overviewPollTimer);
   clearTimeout(searchTimer);
   searchController?.abort();
   const previous = state.route;
@@ -135,6 +165,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
       try { await syncBootstrap(); if (epoch === navigationEpoch) setMain(homePage(state.bootstrap, state.config)); }
       catch (error) { if (epoch === navigationEpoch) toast(error.message); }
     }
+    scheduleOverviewPoll(epoch);
     return;
   }
   if (route.page === 'search') {
@@ -149,6 +180,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
       try { await syncBootstrap(); if (epoch === navigationEpoch) setMain(libraryPage(state.bootstrap.library)); }
       catch (error) { if (epoch === navigationEpoch) setMain(errorState(error.message)); }
     }
+    scheduleOverviewPoll(epoch);
     return;
   }
   if (route.page === 'game' && state.game?.game.app_id === route.appId && !force) {
@@ -164,6 +196,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
       state.notifications = result;
       updateUnread(result.unread_count);
       setMain(inboxPage(result, state.bootstrap.profile, state.config));
+      scheduleOverviewPoll(epoch);
     } else {
       const result = await api.game(route.appId);
       if (epoch !== navigationEpoch) return;
@@ -261,14 +294,12 @@ document.addEventListener('click', async event => {
   });
   else if (action === 'write-access') await mutateButton(button, 'delivery', async () => {
     const allowed = await telegram.requestWriteAccess();
-    if (!allowed) { toast('Откройте бота и нажмите «Начать», затем снова откройте приложение.'); return; }
-    await api.authenticate(true);
+    if (!allowed) { toast('Уведомления не включены. Можно открыть бота и нажать «Начать», затем снова открыть приложение.'); return; }
+    // initData can stay unchanged after Telegram grants access. The server
+    // confirms permission with Bot API for this authenticated profile.
+    await api.setTelegramDelivery(true);
     await syncBootstrap();
-    if (state.bootstrap.profile.telegram_can_message) {
-      await api.setTelegramDelivery(true);
-      await syncBootstrap();
-      toast('Уведомления в Telegram включены.');
-    } else toast('Разрешение получено. Откройте бота и нажмите «Начать», затем снова откройте приложение.');
+    toast('Уведомления в Telegram включены.');
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config));
   });
@@ -382,10 +413,21 @@ document.addEventListener('submit', async event => {
 window.addEventListener('hashchange', () => {
   if (state.bootstrap) loadRoute();
 });
-window.addEventListener('pagehide', () => { searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pagehide', () => { searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pageshow', event => {
+  if (!event.persisted) return;
+  telegram.init();
+  if (state.bootstrap) loadRoute({ focus: false, force: true });
+});
+document.addEventListener('visibilitychange', () => {
+  if (!state.bootstrap) return;
+  if (document.hidden) { clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); }
+  else { scheduleGamePoll(navigationEpoch); scheduleOverviewPoll(navigationEpoch); }
+});
 
 async function start() {
   clearTimeout(gamePollTimer);
+  clearTimeout(overviewPollTimer);
   searchController?.abort();
   state.bootstrap = null;
   appRoot.innerHTML = shell(state.route, state.bootstrap);
@@ -393,7 +435,7 @@ async function start() {
   try {
     state.config = await loadRuntimeConfig();
     if (state.config.remote) {
-      await loadTelegramSDK();
+      if (!await loadTelegramSDK()) throw new ApiError('Не удалось загрузить компоненты Telegram. Проверьте соединение и повторите попытку.', 'telegram_unavailable');
       telegram.init();
       setMain(loadingState('Подтверждаем профиль Telegram…'));
     }

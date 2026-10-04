@@ -1,18 +1,38 @@
 // Only raw signed initData is sent to the server; unsafe client identity fields
 // never authorize a profile. Outside Telegram this adapter has no user data.
+const sdkLoads = new WeakMap();
 export async function loadTelegramSDK(host = globalThis.window) {
   if (host?.Telegram?.WebApp) return true;
   if (!host?.document) return false;
-  return await new Promise(resolve => {
-    const script = host.document.createElement('script');
-    const timer = setTimeout(() => resolve(false), 10000);
-    const finish = value => { clearTimeout(timer); resolve(value); };
-    script.src = 'https://telegram.org/js/telegram-web-app.js?61';
-    script.async = true;
-    script.onload = () => finish(Boolean(host.Telegram?.WebApp));
-    script.onerror = () => finish(false);
-    host.document.head.append(script);
+  if (sdkLoads.has(host)) return await sdkLoads.get(host);
+  const promise = new Promise(resolve => {
+    const previous = host.document.getElementById?.('telegram-webapp-sdk');
+    const script = previous || host.document.createElement('script');
+    let timer;
+    const finish = value => {
+      clearTimeout(timer);
+      script.removeEventListener('load', loaded);
+      script.removeEventListener('error', failed);
+      if (!value) script.remove();
+      resolve(value);
+    };
+    const loaded = () => finish(Boolean(host.Telegram?.WebApp));
+    const failed = () => finish(false);
+    script.addEventListener('load', loaded);
+    script.addEventListener('error', failed);
+    timer = setTimeout(failed, 10000);
+    if (!previous) {
+      script.id = 'telegram-webapp-sdk';
+      script.src = 'https://telegram.org/js/telegram-web-app.js?63';
+      script.async = true;
+      host.document.head.append(script);
+    }
+    if (host.Telegram?.WebApp) loaded();
   });
+  sdkLoads.set(host, promise);
+  const loaded = await promise;
+  if (!loaded) sdkLoads.delete(host);
+  return loaded;
 }
 
 export function createTelegramAdapter(host = globalThis.window) {
@@ -71,7 +91,13 @@ export function createTelegramAdapter(host = globalThis.window) {
   async function requestWriteAccess() {
     const webApp = host?.Telegram?.WebApp;
     if (!webApp?.requestWriteAccess) return false;
-    return await new Promise(resolve => webApp.requestWriteAccess(allowed => resolve(Boolean(allowed))));
+    if (webApp.isVersionAtLeast && !webApp.isVersionAtLeast('6.9')) return false;
+    try {
+      return await new Promise((resolve, reject) => {
+        try { webApp.requestWriteAccess(allowed => resolve(Boolean(allowed))); }
+        catch (error) { reject(error); }
+      });
+    } catch { return false; }
   }
   return { init, updateBack, destroy, rawInitData, requestWriteAccess };
 }

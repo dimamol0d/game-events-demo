@@ -40,7 +40,7 @@ p { line-height: 1.55; }
 .skip-link { position: fixed; z-index: 20; left: 12px; top: -100px; background: var(--surface); padding: 15px 20px; border: 2px solid var(--focus); border-radius: 8px; }
 .skip-link:focus { top: 12px; }
 .initial-loading { padding: 80px 30px; text-align: center; }
-.app-layout { min-height: 100dvh; }
+.app-layout { min-height: var(--app-height, 100dvh); }
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 238px; color: #f1f5f8; background: var(--navy); padding: 37px 22px 24px; display: flex; flex-direction: column; z-index: 6; }
 .brand { display: flex; align-items: center; gap: 13px; font-size: 1.15rem; line-height: 1.14; font-weight: 630; letter-spacing: -.02em; padding: 0 12px; }
 .brand-mark { width: 43px; height: 43px; fill: none; stroke: var(--blue); stroke-width: 1.3; flex-shrink: 0; }
@@ -289,6 +289,11 @@ html[data-theme=dark] .error-state p { color: #edcfac; }
 html[data-theme=dark] .event-kind { background: #2d4b42; color: #a2dcc5; }
 html[data-theme=dark] .event-kind.is-news { background: #314967; color: #b9cff7; }
 html[data-theme=dark] .avatar { background: #344b59; color: #f1f5f8; }
+html[data-theme=dark] .game-row-main:hover h3, html[data-theme=dark] .event-card h3 a:hover, html[data-theme=dark] .inbox-item h2 a:hover { color: #96b5f8; }
+html[data-theme=dark] .event-kind.is-build, html[data-theme=dark] .archive-label, html[data-theme=dark] .build-change { color: #becada; }
+html[data-theme=dark] .icon-button, html[data-theme=dark] .empty-symbol { color: #b9cff7; }
+html[data-theme=dark] .icon-button:hover { background: #344b59; }
+html[data-theme=dark] .button.danger { color: #f2bcb0; border-color: #996c61; }
 @media (max-width: 1260px) {
   .sidebar { width: 214px; padding-left: 17px; padding-right: 17px; }
   .workspace { margin-left: 214px; }
@@ -333,7 +338,7 @@ html[data-theme=dark] .avatar { background: #344b59; color: #f1f5f8; }
 @media (max-width: 720px) {
   .sidebar { display: none; }
   .workspace { margin-left: 0; }
-  .topbar { height: 77px; padding: max(12px, var(--tg-inset-top, 0px)) max(20px, var(--tg-inset-right, 0px)) 12px max(20px, var(--tg-inset-left, 0px)); }
+  .topbar { height: auto; min-height: 77px; padding: calc(12px + var(--tg-inset-top, 0px)) max(20px, var(--tg-inset-right, 0px)) 12px max(20px, var(--tg-inset-left, 0px)); }
   .mobile-brand { display: block; font-size: 1rem; font-weight: 650; letter-spacing: -.035em; }
   .profile-pill { font-size: .73rem; }
   .profile-pill small { font-size: .64rem; }
@@ -342,7 +347,7 @@ html[data-theme=dark] .avatar { background: #344b59; color: #f1f5f8; }
   .mobile-nav .nav-item { position: relative; flex: 1; flex-direction: column; gap: 5px; background: none; border-radius: 0; font-size: .63rem; padding: 10px 3px 4px; min-height: 55px; }
   .mobile-nav .nav-item.active { color: var(--mint); }
   .mobile-nav .unread-count { position: absolute; top: 3px; left: calc(50% + 6px); min-width: 17px; height: 17px; font-size: .59rem; }
-  main { padding: 29px max(20px, var(--tg-inset-right, 0px)) 110px max(20px, var(--tg-inset-left, 0px)); }
+  main { padding: 29px max(20px, var(--tg-inset-right, 0px)) calc(110px + max(env(safe-area-inset-bottom), var(--tg-inset-bottom, 0px))) max(20px, var(--tg-inset-left, 0px)); }
   .page-heading { margin-bottom: 27px; align-items: flex-start; gap: 14px; }
   h1 { font-size: 2rem; }
   .page-heading p { font-size: .84rem; }
