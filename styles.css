@@ -397,12 +397,10 @@ html[data-theme=dark] .button.danger { color: #f2bcb0; border-color: #996c61; }
   .section-heading h2 { font-size: 1.13rem; }
   .section-heading > .subtle { font-size: .7rem; }
   .bulletin-grid { gap: 14px; }
-  .bulletin-lead, .bulletin:only-child { display: block; }
-  .bulletin-lead .game-art, .bulletin:only-child .game-art { width: 100%; height: auto; aspect-ratio: 460 / 215; }
-  .bulletin-lead .bulletin-body { padding: 23px; }
+  .bulletin, .bulletin-lead, .bulletin:only-child { display: block; }
+  .bulletin .game-art, .bulletin-lead .game-art, .bulletin:only-child .game-art { width: 100%; height: auto; max-height: 200px; aspect-ratio: 460 / 215; object-fit: cover; }
+  .bulletin-body, .bulletin-lead .bulletin-body { padding: 20px; }
   .bulletin-lead h3 { font-size: 1.45rem; }
-  .bulletin { grid-template-columns: 94px 1fr; }
-  .bulletin-body { padding: 17px; }
   .bulletin:not(.bulletin-lead) h3 { font-size: 1rem; }
   .bulletin:not(.bulletin-lead) .event-meta { font-size: .66rem; }
   .bulletin:not(.bulletin-lead) .bulletin-game { margin-bottom: 8px; }
