@@ -1,4 +1,4 @@
-import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, eventUnderstanding, eventMatchesId, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, modesForPreferences, MODES, DEFAULT_PREFS } from './model.mjs?v=20261005-foundation';
+import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, eventUnderstanding, eventMatchesId, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, modesForPreferences, MODES, DEFAULT_PREFS } from './model.mjs?v=20261005-foundation2';
 
 const paths = {
   home: '<path d="m3 11 9-8 9 8M5 10v11h5v-7h4v7h5V10"/>',
@@ -87,7 +87,9 @@ export function eventEvidence(event, preferred = 'ru', expanded = false) {
   const labels = analysis.change_types.filter(type => changeLabels[type]).map(type => changeLabels[type]);
   const update = ['update', 'unknown'].includes(analysis.category);
   const versions = analysis.version_labels.slice(0, 3);
-  return `<div class="event-evidence">${update ? `<span class="importance-label ${analysis.importance_level === 'important' ? 'importance-major' : ''}">${h(analysis.importance_label)}</span>` : ''}${labels.map(label => `<span class="change-tag">${h(label)}</span>`).join('')}${versions.map(version => `<span class="change-tag">Версия ${h(version)}</span>`).join('')}</div>${expanded && (analysis.category_reason_ru || update && analysis.severity_reason_ru) ? `<details class="classification-explanation"><summary>Почему так определено</summary>${analysis.category_reason_ru ? `<p>${h(analysis.category_reason_ru)}</p>` : ''}${update && analysis.severity_reason_ru ? `<p>${h(analysis.severity_reason_ru)}</p>` : ''}<p>Определяем по словам и явным признакам в исходной публикации. Если данных мало, оставляем оценку неизвестной.</p></details>` : ''}`;
+  const reasons = [analysis.category_reason_ru, ...(update ? [analysis.importance_reason_ru, analysis.severity_reason_ru] : [])].filter(Boolean);
+  const uniqueReasons = [...new Set(reasons)];
+  return `<div class="event-evidence">${update ? `<span class="importance-label ${analysis.importance_level === 'important' ? 'importance-major' : ''}">${h(analysis.importance_label)}</span>` : ''}${labels.map(label => `<span class="change-tag">${h(label)}</span>`).join('')}${versions.map(version => `<span class="change-tag">Версия ${h(version)}</span>`).join('')}</div>${expanded && uniqueReasons.length ? `<details class="classification-explanation"><summary>Почему так определено</summary>${uniqueReasons.map(reason => `<p>${h(reason)}</p>`).join('')}<p>Определяем по словам и явным признакам в исходной публикации. Если данных мало, оставляем оценку неизвестной.</p></details>` : ''}`;
 }
 
 function relatedSources(event, expanded = false) {

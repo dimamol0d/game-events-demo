@@ -104,6 +104,7 @@ main { max-width: 1380px; margin: 0 auto; padding: 39px 42px 70px; }
 .bulletin:only-child .game-art { height: 100%; }
 .bulletin:only-child .bulletin-body { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
 .home-columns { display: grid; grid-template-columns: 1.3fr 1fr; gap: 34px; margin-top: 38px; align-items: start; }
+.home-columns > section { min-width: 0; }
 .game-list { background: var(--surface); border-radius: 11px; overflow: hidden; border: 1px solid var(--line); }
 .game-row { display: flex; align-items: center; justify-content: space-between; gap: 13px; padding: 17px 19px; }
 .game-row + .game-row { border-top: 1px solid var(--line); }
@@ -366,6 +367,7 @@ html[data-theme=dark] .button.danger { color: #f2bcb0; border-color: #996c61; }
   .bulletin-lead h3 { font-size: 1.3rem; }
   .bulletin { min-height: 0; }
   .bulletin:not(.bulletin-lead) p { display: none; }
+  .bulletin:not(.bulletin-lead) .summary-basis { display: block; }
   .bulletin:only-child { min-height: 0; }
   .mode-grid { grid-template-columns: 1fr; }
   .game-heading-art { width: 35%; }

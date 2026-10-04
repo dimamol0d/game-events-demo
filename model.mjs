@@ -86,7 +86,7 @@ export function eventUnderstanding(event, preferred = 'ru') {
   const importance = ({ important: 'Важное обновление', routine: 'Небольшие изменения' })[importanceLevel] || 'Важность пока неизвестна';
   return { ...original, summary_points: summary, importance_label: importance, importance_level: importanceLevel,
     summary_original: summary.length > 0 && !language.originalRussian && !(language.russian && event.understanding_ru),
-    category_reason_ru: original.category_reason_ru || '', severity_reason_ru: original.importance_reason_ru || original.severity_reason_ru || '',
+    category_reason_ru: original.category_reason_ru || '', importance_reason_ru: original.importance_reason_ru || '', severity_reason_ru: original.severity_reason_ru || '',
     version_labels: Array.isArray(original.version_labels) ? original.version_labels : [],
     explicit_build_ids: Array.isArray(original.explicit_build_ids) ? original.explicit_build_ids : [],
     change_types: Array.isArray(original.change_types) ? original.change_types : [] };
