@@ -1,8 +1,8 @@
-import { api, ApiError } from './api.mjs?v=20261004-reconnect';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId } from './model.mjs';
-import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs';
-import { loadRuntimeConfig } from './config.mjs?v=20261004-reconnect';
+import { api, ApiError } from './api.mjs?v=20261005-foundation';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId } from './model.mjs?v=20261005-foundation';
+import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs?v=20261005-foundation';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261005-foundation';
+import { loadRuntimeConfig } from './config.mjs?v=20261005-foundation';
 
 const appRoot = document.querySelector('#app');
 const toastElement = document.querySelector('#toast');
