@@ -1,4 +1,4 @@
-import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, eventUnderstanding, eventMatchesId, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, modesForPreferences, MODES, DEFAULT_PREFS } from './model.mjs?v=20261005-schedules2';
+import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, eventUnderstanding, eventMatchesId, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, modesForPreferences, MODES, DEFAULT_PREFS } from './model.mjs?v=20261005-recovery1';
 
 const paths = {
   home: '<path d="m3 11 9-8 9 8M5 10v11h5v-7h4v7h5V10"/>',

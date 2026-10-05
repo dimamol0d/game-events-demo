@@ -20,19 +20,31 @@ export function resolveConfig(value = {}, pageURL = globalThis.location?.href) {
 }
 
 export async function loadRuntimeConfig(fetchImpl = globalThis.fetch, pageURL = globalThis.location?.href, { timeoutMs = 10000, clock = Date.now } = {}) {
+  const page = new URL(pageURL);
   const url = new URL('./runtime-config.json', pageURL);
   url.searchParams.set('_radar', String(clock()));
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchImpl(url.href, { cache: 'no-store', credentials: 'omit', signal: controller.signal });
-    if (!response.ok) {
-      if (LOOPBACK.has(new URL(pageURL).hostname)) return resolveConfig({}, pageURL);
-      throw new Error('Не удалось загрузить адрес домашнего сервера. Повторите попытку.');
-    }
-    return resolveConfig(await response.json(), pageURL);
-  } catch (error) {
-    if (error?.message === 'Адрес сервера приложения настроен неправильно.') throw error;
-    throw new Error('Не удалось загрузить адрес домашнего сервера. Повторите попытку.');
-  } finally { clearTimeout(timeout); }
+  const sources = [url];
+  // This public repository already owns the deployed app. Reading its branch
+  // config avoids waiting for a Pages deployment after each tunnel reconnect.
+  // Other sites and local previews never contact this additional origin.
+  if (page.protocol === 'https:' && page.hostname === 'dimamol0d.github.io'
+      && page.pathname.startsWith('/game-events-demo/')) {
+    const branch = new URL('https://raw.githubusercontent.com/dimamol0d/game-events-demo/gh-pages/runtime-config.json');
+    branch.searchParams.set('_radar', String(clock()));
+    sources.unshift(branch);
+  }
+  for (const source of sources) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs / sources.length);
+    try {
+      const response = await fetchImpl(source.href, { cache: 'no-store', credentials: 'omit', signal: controller.signal });
+      if (!response.ok) continue;
+      const config = resolveConfig(await response.json(), pageURL);
+      if (config.configured) return config;
+    } catch (error) {
+      if (error?.message === 'Адрес сервера приложения настроен неправильно.') throw error;
+    } finally { clearTimeout(timeout); }
+  }
+  if (LOOPBACK.has(page.hostname)) return resolveConfig({}, pageURL);
+  throw new Error('Не удалось загрузить адрес домашнего сервера. Повторите попытку.');
 }
