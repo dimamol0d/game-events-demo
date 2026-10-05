@@ -23,7 +23,7 @@ export async function loadRuntimeConfig(fetchImpl = globalThis.fetch, pageURL = 
   const page = new URL(pageURL);
   const url = new URL('./runtime-config.json', pageURL);
   url.searchParams.set('_radar', String(clock()));
-  const sources = [url];
+  const sources = [{ url }];
   // This public repository already owns the deployed app. Reading its branch
   // config avoids waiting for a Pages deployment after each tunnel reconnect.
   // Other sites and local previews never contact this additional origin.
@@ -31,13 +31,19 @@ export async function loadRuntimeConfig(fetchImpl = globalThis.fetch, pageURL = 
       && page.pathname.startsWith('/game-events-demo/')) {
     const branch = new URL('https://raw.githubusercontent.com/dimamol0d/game-events-demo/gh-pages/runtime-config.json');
     branch.searchParams.set('_radar', String(clock()));
-    sources.unshift(branch);
+    const contents = new URL('https://api.github.com/repos/dimamol0d/game-events-demo/contents/runtime-config.json');
+    contents.searchParams.set('ref', 'gh-pages');
+    contents.searchParams.set('_radar', String(clock()));
+    // The raw CDN can retain a previous tunnel URL for several minutes. This
+    // public Contents request returns the JSON file itself without credentials.
+    sources.unshift({ url: contents, headers: { Accept: 'application/vnd.github.raw+json' } }, { url: branch });
   }
   for (const source of sources) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs / sources.length);
     try {
-      const response = await fetchImpl(source.href, { cache: 'no-store', credentials: 'omit', signal: controller.signal });
+      const response = await fetchImpl(source.url.href, { cache: 'no-store', credentials: 'omit', signal: controller.signal,
+        ...(source.headers ? { headers: source.headers } : {}) });
       if (!response.ok) continue;
       const config = resolveConfig(await response.json(), pageURL);
       if (config.configured) return config;
