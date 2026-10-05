@@ -1,8 +1,8 @@
-import { api, ApiError } from './api.mjs?v=20261005-foundation2';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId } from './model.mjs?v=20261005-foundation2';
-import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs?v=20261005-foundation2';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261005-foundation2';
-import { loadRuntimeConfig } from './config.mjs?v=20261005-foundation2';
+import { api, ApiError } from './api.mjs?v=20261005-schedules1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId } from './model.mjs?v=20261005-schedules1';
+import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs?v=20261005-schedules1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261005-schedules1';
+import { loadRuntimeConfig } from './config.mjs?v=20261005-schedules1';
 
 const appRoot = document.querySelector('#app');
 const toastElement = document.querySelector('#toast');
@@ -76,19 +76,20 @@ function renderGame({ focus = false, loadingMore = false } = {}) {
 function queueSelectedTranslation() {
   const event = state.game?.events.find(item => eventMatchesId(item, state.route.eventId));
   if (!event || translationRequested.has(String(event.id)) || event.kind === 'public_build_changed'
-    || event.translation_status === 'ready' || String(event.original_language || '').toLowerCase().startsWith('ru') || !event.contents?.trim()) return;
+    || event.short_translation_status === 'ready' || String(event.original_language || '').toLowerCase().startsWith('ru') || !event.contents?.trim()) return;
   translationRequested.add(String(event.id));
-  requestTranslation(event).catch(() => {});
+  requestTranslation(event, true).catch(() => {});
 }
 
-async function requestTranslation(event) {
+async function requestTranslation(event, shortOnly = false) {
   const eventId = Number(event.id);
   if (!Number.isSafeInteger(eventId) || eventId < 1) return false;
   const epoch = navigationEpoch;
-  const result = await api.translate(eventId);
+  const result = await (shortOnly ? api.translateShort(eventId) : api.translate(eventId));
   if (epoch !== navigationEpoch || state.route.page !== 'game') return result.queued;
   if (result.queued) {
-    event.translation_status = 'pending';
+    if (result.short_queued) event.short_translation_status = 'pending';
+    if (result.full_queued || !shortOnly && result.full_queued === undefined) event.translation_status = 'pending';
     renderGame();
     scheduleGamePoll(epoch, 2500);
   } else {
@@ -104,7 +105,7 @@ async function requestTranslation(event) {
 
 function scheduleGamePoll(epoch, delay = 4500) {
   clearTimeout(gamePollTimer);
-  if (document.hidden || state.route.page !== 'game' || !state.game || (state.game.game.poll_status !== 'awaiting' && !state.game.events.some(event => event.translation_status === 'pending'))) return;
+  if (document.hidden || state.route.page !== 'game' || !state.game || (state.game.game.poll_status !== 'awaiting' && !state.game.events.some(event => event.translation_status === 'pending' || event.short_translation_status === 'pending'))) return;
   gamePollTimer = setTimeout(async () => {
     if (epoch !== navigationEpoch || document.hidden || state.route.page !== 'game') return;
     const appId = state.route.appId;
@@ -119,7 +120,7 @@ function scheduleGamePoll(epoch, delay = 4500) {
       const scroll = window.scrollY;
       renderGame();
       window.scrollTo({ top: scroll, behavior: 'instant' });
-      if (fresh.game.poll_status === 'awaiting' || merged.some(event => event.translation_status === 'pending')) scheduleGamePoll(epoch, Math.min(delay * 1.5, 20000));
+      if (fresh.game.poll_status === 'awaiting' || merged.some(event => event.translation_status === 'pending' || event.short_translation_status === 'pending')) scheduleGamePoll(epoch, Math.min(delay * 1.5, 20000));
     } catch { if (epoch === navigationEpoch) scheduleGamePoll(epoch, 20000); }
   }, delay);
 }
@@ -128,8 +129,8 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
   clearTimeout(overviewPollTimer);
   if (!state.bootstrap || !['home', 'library', 'inbox'].includes(state.route.page) || document.hidden) return;
   const games = [...state.bootstrap.library, ...state.bootstrap.featured];
-  const pending = games.some(game => game.poll_status === 'awaiting' || game.latest_event?.translation_status === 'pending')
-    || state.route.page === 'inbox' && state.notifications?.items?.some(item => item.event.translation_status === 'pending')
+  const pending = games.some(game => game.poll_status === 'awaiting' || game.latest_event?.translation_status === 'pending' || game.latest_event?.short_translation_status === 'pending')
+    || state.route.page === 'inbox' && state.notifications?.items?.some(item => item.event.translation_status === 'pending' || item.event.short_translation_status === 'pending')
     || Number(state.bootstrap.delivery_status?.pending_count) > 0;
   if (!pending) return;
   overviewPollTimer = setTimeout(async () => {

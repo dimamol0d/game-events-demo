@@ -81,11 +81,13 @@ export function eventUnderstanding(event, preferred = 'ru') {
   const language = publicationLanguage(event, preferred);
   const original = event.understanding || {};
   const localized = language.russian && event.understanding_ru ? event.understanding_ru : original;
-  const summary = Array.isArray(localized.summary_points) ? localized.summary_points.filter(point => typeof point === 'string' && point.trim()).slice(0, 4) : [];
+  const useShort = preferred !== 'original' && event.short_translation_status === 'ready' && Array.isArray(event.summary_points_ru) && event.summary_points_ru.length > 0;
+  const summary = (useShort ? event.summary_points_ru : Array.isArray(localized.summary_points) ? localized.summary_points : []).filter(point => typeof point === 'string' && point.trim()).slice(0, 4);
   const importanceLevel = original.importance || ({ major: 'important', minor: 'routine' })[original.severity] || 'unknown';
   const importance = ({ important: 'Важное обновление', routine: 'Небольшие изменения' })[importanceLevel] || 'Важность пока неизвестна';
   return { ...original, summary_points: summary, importance_label: importance, importance_level: importanceLevel,
-    summary_original: summary.length > 0 && !language.originalRussian && !(language.russian && event.understanding_ru),
+    summary_translated: !language.originalRussian && (useShort || Boolean(language.russian && event.understanding_ru)),
+    summary_original: summary.length > 0 && !language.originalRussian && !useShort && !(language.russian && event.understanding_ru),
     category_reason_ru: original.category_reason_ru || '', importance_reason_ru: original.importance_reason_ru || '', severity_reason_ru: original.severity_reason_ru || '',
     version_labels: Array.isArray(original.version_labels) ? original.version_labels : [],
     explicit_build_ids: Array.isArray(original.explicit_build_ids) ? original.explicit_build_ids : [],
@@ -111,8 +113,10 @@ export function sourceLabel(source) {
 export function publicationLanguage(event, preferred = 'ru') {
   const translated = event.translation_status === 'ready' && typeof event.contents_ru === 'string' && Boolean(event.contents_ru.trim());
   const russian = preferred !== 'original' && translated;
-  return { title: russian && typeof event.title_ru === 'string' && event.title_ru.trim() ? event.title_ru : event.title,
-    contents: russian ? event.contents_ru : event.contents, translated, russian,
+  const shortTranslated = event.short_translation_status === 'ready' && (typeof event.short_title_ru === 'string' && Boolean(event.short_title_ru.trim()) || Array.isArray(event.summary_points_ru) && event.summary_points_ru.length > 0);
+  const shortRussian = preferred !== 'original' && shortTranslated;
+  return { title: shortRussian && typeof event.short_title_ru === 'string' && event.short_title_ru.trim() ? event.short_title_ru : russian && typeof event.title_ru === 'string' && event.title_ru.trim() ? event.title_ru : event.title,
+    contents: russian ? event.contents_ru : event.contents, translated, russian, shortTranslated, shortRussian,
     originalRussian: String(event.original_language || '').toLowerCase().startsWith('ru') };
 }
 
