@@ -270,7 +270,18 @@ input[type=radio], input[type=checkbox] { accent-color: #416eaa; width: 18px; he
 .connection-card > p { color: var(--muted); font-size: .93rem; margin-bottom: 18px; }
 .connection-card > .connection-explanation { font-size: .84rem; }
 .connection-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 27px; }
-.telegram-delivery { display: flex; align-items: center; justify-content: space-between; gap: 25px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid #6aa88d; padding: 22px 24px; border-radius: 9px; margin-bottom: 28px; }
+.telegram-delivery { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 25px; background: var(--surface); border: 1px solid var(--line); border-left: 3px solid #6aa88d; padding: 22px 24px; border-radius: 9px; margin-bottom: 28px; }
+.delivery-copy { flex: 1 1 280px; min-width: 0; }
+.delivery-schedule { flex-basis: 100%; min-width: 0; width: 100%; border-top: 1px solid var(--line); padding-top: 15px; }
+.delivery-schedule summary { cursor: pointer; font-weight: 600; font-size: .84rem; line-height: 1.5; }
+.schedule-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; margin: 17px 0; }
+.schedule-field { display: grid; gap: 7px; font-size: .78rem; font-weight: 600; min-width: 0; }
+.schedule-field select, .schedule-field input { width: 100%; min-width: 0; min-height: 44px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.telegram-delivery .schedule-explanation { font-size: .75rem; margin: 12px 0 16px; }
+.schedule-quiet { display: flex; gap: 9px; align-items: center; font-size: .85rem; font-weight: 600; }
+.schedule-quiet input { width: 20px; height: 20px; accent-color: #6aa88d; }
+.schedule-save { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.schedule-save [role=status] { font-size: .75rem; line-height: 1.5; color: var(--muted); }
 .telegram-delivery h3 { font-size: 1rem; margin-bottom: 7px; }
 .telegram-delivery p { font-size: .82rem; color: var(--muted); margin-bottom: 0; max-width: 62ch; }
 .delivery-actions { display: flex; flex-wrap: wrap; gap: 9px; flex-shrink: 0; }
@@ -458,6 +469,8 @@ html[data-theme=dark] .button.danger { color: #f2bcb0; border-color: #996c61; }
   .inbox-item p { font-size: .8rem; }
   .toast { bottom: calc(88px + max(env(safe-area-inset-bottom), var(--tg-inset-bottom, 0px))); left: 50%; max-width: calc(100vw - 32px); width: max-content; padding: 14px 18px; }
   .telegram-delivery { display: block; padding: 20px; }
+  .delivery-schedule { margin-top: 20px; }
+  .schedule-grid { grid-template-columns: 1fr; }
   .delivery-actions { margin-top: 17px; }
   .delivery-actions { max-width: none; }
   .change-summary li { font-size: .84rem; }

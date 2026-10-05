@@ -191,6 +191,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     markRead: () => request('/api/notifications/read', { method: 'POST', body: {} }),
     setTelegramDelivery: enabled => request('/api/profile/delivery', { method: 'POST', body: { enabled } }),
     testTelegramDelivery: () => request('/api/profile/delivery/test', { method: 'POST', body: {} }),
+    saveDeliverySchedule: schedule => request('/api/profile/delivery/schedule', { method: 'POST', body: schedule }),
     translate: eventId => request(`/api/events/${eventId}/translate`, { method: 'POST', body: {} }),
   };
 }

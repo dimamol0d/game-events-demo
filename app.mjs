@@ -28,7 +28,11 @@ function toast(message) {
 
 function main() { return document.querySelector('#main-content'); }
 function setMain(html, focus = false) {
+  const schedule = main().querySelector('.delivery-schedule[open]');
+  const active = schedule?.contains(document.activeElement) ? document.activeElement : null;
   main().innerHTML = html;
+  if (schedule) main().querySelector('.delivery-schedule')?.replaceWith(schedule);
+  if (active?.isConnected) active.focus({ preventScroll: true });
   if (focus) main().focus({ preventScroll: true });
 }
 function updateUnread(count) {
@@ -130,9 +134,11 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
   if (!pending) return;
   overviewPollTimer = setTimeout(async () => {
     if (epoch !== navigationEpoch || document.hidden) return;
+    if (document.querySelector('.delivery-schedule[open]')) { scheduleOverviewPoll(epoch, 10000); return; }
     try {
       await syncBootstrap();
       if (epoch !== navigationEpoch) return;
+      if (document.querySelector('.delivery-schedule[open]')) { scheduleOverviewPoll(epoch, 10000); return; }
       const scroll = window.scrollY;
       if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
       else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
@@ -384,6 +390,15 @@ function syncPreferenceNotes(form) {
 }
 
 document.addEventListener('change', event => {
+  const scheduleForm = event.target.closest('#delivery-schedule-form');
+  if (scheduleForm) {
+    scheduleForm.querySelector('.schedule-daily').hidden = scheduleForm.elements.mode.value !== 'digest';
+    scheduleForm.elements.daily_time.disabled = scheduleForm.elements.mode.value !== 'digest';
+    scheduleForm.querySelector('.schedule-quiet-times').hidden = !scheduleForm.elements.quiet_enabled.checked;
+    for (const name of ['quiet_start', 'quiet_end']) scheduleForm.elements[name].disabled = !scheduleForm.elements.quiet_enabled.checked;
+    scheduleForm.querySelector('#schedule-message').textContent = 'Есть несохранённые изменения.';
+    return;
+  }
   if (event.target.name === 'kind' && event.target.closest('#search-form')) {
     state.search.kind = event.target.value;
     state.search.result = null;
@@ -405,6 +420,29 @@ function readPreferences(form) {
 
 document.addEventListener('submit', async event => {
   if (event.target.id === 'search-form') { event.preventDefault(); await runSearch(); }
+  if (event.target.id === 'delivery-schedule-form') {
+    event.preventDefault();
+    const form = event.target;
+    const message = form.querySelector('#schedule-message');
+    const schedule = { mode: form.elements.mode.value, utc_offset_minutes: Number(form.elements.utc_offset_minutes.value), quiet_enabled: form.elements.quiet_enabled.checked,
+      ...(form.elements.mode.value === 'digest' ? { daily_time: form.elements.daily_time.value } : {}),
+      ...(form.elements.quiet_enabled.checked ? { quiet_start: form.elements.quiet_start.value, quiet_end: form.elements.quiet_end.value } : {}) };
+    await mutateButton(form.querySelector('[type="submit"]'), 'delivery-schedule', async () => {
+      message.textContent = 'Сохраняем…';
+      const controls = Array.from(form.querySelectorAll('input,select'));
+      const disabled = controls.map(control => control.disabled);
+      controls.forEach(control => { control.disabled = true; });
+      try {
+        const result = await api.saveDeliverySchedule(schedule);
+        state.bootstrap.delivery_status = result.delivery_status;
+        form.closest('details').querySelector('.schedule-caption').textContent = result.schedule.mode === 'digest' ? `Сводка в ${result.schedule.daily_time}` : 'Сразу после обнаружения';
+        message.textContent = 'Расписание сохранено.';
+        toast('Расписание сохранено. Фильтры игр продолжают действовать.');
+      } catch (error) { message.textContent = 'Не сохранено. ' + error.message; throw error; }
+      finally { controls.forEach((control, index) => { control.disabled = disabled[index]; }); }
+    });
+    return;
+  }
   if (event.target.id !== 'preferences-form') return;
   event.preventDefault();
   const form = event.target;
