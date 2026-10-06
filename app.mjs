@@ -1,8 +1,9 @@
-import { api, ApiError } from './api.mjs?v=20261005-recovery2';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId } from './model.mjs?v=20261005-recovery2';
-import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs?v=20261005-recovery2';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261005-recovery2';
-import { loadRuntimeConfig } from './config.mjs?v=20261005-recovery2';
+import { api, ApiError } from './api.mjs?v=20261006-library1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, escapeHTML as h } from './model.mjs?v=20261006-library1';
+import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs?v=20261006-library1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261006-library1';
+import { loadRuntimeConfig } from './config.mjs?v=20261006-library1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261006-library1';
 
 const appRoot = document.querySelector('#app');
 const toastElement = document.querySelector('#toast');
@@ -18,6 +19,7 @@ let overviewPollTimer;
 let bootstrapUpdatedAt = 0;
 const mutations = new Set();
 const translationRequested = new Set();
+const transfer = { open: false, input: '', entries: [], selected: new Set(), busy: false, message: '', exportText: '', readEpoch: 0 };
 
 function toast(message) {
   clearTimeout(toastTimer);
@@ -29,11 +31,113 @@ function toast(message) {
 function main() { return document.querySelector('#main-content'); }
 function setMain(html, focus = false) {
   const schedule = main().querySelector('.delivery-schedule[open]');
-  const active = schedule?.contains(document.activeElement) ? document.activeElement : null;
+  const transferPanel = main().querySelector('#library-transfer:not([hidden])');
+  const active = schedule?.contains(document.activeElement) || transferPanel?.contains(document.activeElement) ? document.activeElement : null;
   main().innerHTML = html;
   if (schedule) main().querySelector('.delivery-schedule')?.replaceWith(schedule);
+  if (transferPanel && main().querySelector('#library-transfer')) main().querySelector('#library-transfer').replaceWith(transferPanel);
+  drawTransfer();
   if (active?.isConnected) active.focus({ preventScroll: true });
   if (focus) main().focus({ preventScroll: true });
+}
+
+function selectedTransferGames() { return transfer.entries.filter(game => transfer.selected.has(game.app_id)); }
+
+function drawTransfer() {
+  const panel = document.querySelector('#library-transfer');
+  if (!panel) return;
+  panel.hidden = !transfer.open;
+  const input = panel.querySelector('#library-transfer-input');
+  if (input.value !== transfer.input) input.value = transfer.input;
+  panel.querySelector('#library-transfer-message').textContent = transfer.message;
+  panel.querySelector('#library-export-copy').hidden = !transfer.exportText;
+  panel.querySelector('#library-export-text').value = transfer.exportText;
+  const knownIds = new Set(state.bootstrap?.library.map(game => Number(game.app_id)) || []);
+  panel.querySelector('#library-transfer-preview').innerHTML = transfer.entries.length ? `<div class="transfer-preview"><div class="section-heading"><h3>Проверьте выбор</h3><button class="button small quiet" type="button" data-action="library-transfer-select">${selectedTransferGames().length === transfer.entries.length ? 'Снять выбор' : 'Выбрать все'}</button></div><div class="transfer-game-list">${transfer.entries.map(game => `<label class="transfer-game"><input type="checkbox" data-transfer-id="${game.app_id}" ${transfer.selected.has(game.app_id) ? 'checked' : ''}><span><strong>${h(game.name || `Игра Steam #${game.app_id}`)}</strong><small>AppID ${game.app_id}${knownIds.has(game.app_id) ? ' · Уже в библиотеке, настройки сохранятся' : ' · Проверим игру перед добавлением'}</small></span></label>`).join('')}</div><p class="subtle">Настройки уже добавленных игр сохраняются. Новые игры из файла получат сохранённые настройки, из ссылок — режим «Все обновления». Доставка сообщений и расписание профиля не меняются.</p><button class="button primary" type="button" data-action="library-transfer-import"></button></div>` : '';
+  panel.querySelectorAll('input,textarea,button').forEach(control => { control.disabled = transfer.busy; });
+  // A backup stays readable and selectable while another request is pending.
+  panel.querySelector('#library-export-text').disabled = false;
+  updateTransferSelection();
+}
+
+function updateTransferSelection() {
+  const button = document.querySelector('[data-action="library-transfer-import"]');
+  if (!button) return;
+  const count = selectedTransferGames().length;
+  button.disabled = transfer.busy || !count;
+  button.textContent = transfer.busy ? 'Добавляем игры…' : `Добавить выбранные (${count})`;
+  const select = document.querySelector('[data-action="library-transfer-select"]');
+  if (select) select.textContent = count === transfer.entries.length ? 'Снять выбор' : 'Выбрать все';
+}
+
+function previewTransfer() {
+  if (transfer.busy) return;
+  try {
+    transfer.entries = parseLibraryInput(transfer.input);
+    transfer.selected = new Set(transfer.entries.map(game => game.app_id));
+    transfer.message = `Распознано игр: ${transfer.entries.length}. Названия из файла будут проверены по Steam.`;
+  } catch (error) {
+    transfer.entries = []; transfer.selected.clear(); transfer.message = error.message;
+  }
+  drawTransfer();
+}
+
+async function importTransfer() {
+  if (transfer.busy) return;
+  const games = selectedTransferGames();
+  if (!games.length) return;
+  const existing = new Set(state.bootstrap.library.map(game => Number(game.app_id)));
+  if (existing.size + games.filter(game => !existing.has(game.app_id)).length > LIBRARY_LIMIT) {
+    transfer.message = `В библиотеке может быть до ${LIBRARY_LIMIT} игр. Уменьшите выбор или уберите ненужные игры.`; drawTransfer(); return;
+  }
+  transfer.busy = true; transfer.message = `Проверяем и добавляем ${games.length} игр…`; drawTransfer();
+  const result = await importLibraryBatches(games, payload => api.importLibrary(payload), progress => {
+    const confirmed = new Set(progress.batch.map(game => game.app_id));
+    transfer.entries = transfer.entries.filter(game => !confirmed.has(game.app_id));
+    for (const appId of confirmed) transfer.selected.delete(appId);
+    transfer.message = `Обработано ${progress.completed} из ${games.length}. Добавлено: ${progress.added}. Уже отслеживаются: ${progress.alreadyTracking}.`;
+    drawTransfer();
+  });
+  transfer.message = `Добавлено: ${result.added}. Уже отслеживаются: ${result.alreadyTracking}.`;
+  if (result.error) transfer.message += ` ${result.error.message} Остались выбраны непроверенные игры. Если ответ потерялся, часть могла добавиться: проверьте библиотеку и повторите выбор. Повтор сохраняет существующие настройки.`;
+  else transfer.message += ' Библиотека готова.';
+  try { await syncBootstrap(); }
+  catch { transfer.message += ' Не удалось обновить список на экране. Откройте библиотеку позже.'; }
+  transfer.busy = false;
+  if (state.route.page === 'library') renderAfterLibraryChange();
+  drawTransfer();
+  if (!result.error) toast(`В библиотеку добавлено игр: ${result.added}.`);
+}
+
+async function exportTransfer() {
+  if (transfer.busy) return;
+  transfer.busy = true; transfer.message = 'Сохраняем библиотеку…'; drawTransfer();
+  try {
+    transfer.exportText = serializeLibrary(await api.exportLibrary());
+    transfer.open = true;
+    const blob = new Blob([transfer.exportText], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    try {
+      const link = document.createElement('a');
+      link.href = url; link.download = 'steam-radar-library.json'; document.body.append(link); link.click(); link.remove();
+      transfer.message = 'Файл подготовлен. Если скачивание не появилось, скопируйте JSON ниже.';
+    } finally { setTimeout(() => URL.revokeObjectURL(url), 60000); }
+  } catch (error) { transfer.message = error.message; transfer.open = true; }
+  finally { transfer.busy = false; drawTransfer(); }
+}
+
+async function copyTransfer() {
+  if (!transfer.exportText) return;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable');
+    await navigator.clipboard.writeText(transfer.exportText);
+    transfer.message = 'JSON скопирован. Сохраните его в файл или личные заметки.';
+  } catch {
+    const input = document.querySelector('#library-export-text');
+    input?.focus(); input?.select();
+    transfer.message = 'Автоматическое копирование недоступно. Текст выделен — скопируйте его вручную.';
+  }
+  document.querySelector('#library-transfer-message')?.replaceChildren(document.createTextNode(transfer.message));
 }
 function updateUnread(count) {
   if (state.bootstrap) state.bootstrap.unread_count = count;
@@ -135,11 +239,11 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
   if (!pending) return;
   overviewPollTimer = setTimeout(async () => {
     if (epoch !== navigationEpoch || document.hidden) return;
-    if (document.querySelector('.delivery-schedule[open]')) { scheduleOverviewPoll(epoch, 10000); return; }
+    if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
     try {
       await syncBootstrap();
       if (epoch !== navigationEpoch) return;
-      if (document.querySelector('.delivery-schedule[open]')) { scheduleOverviewPoll(epoch, 10000); return; }
+      if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
       const scroll = window.scrollY;
       if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
       else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
@@ -277,7 +381,17 @@ document.addEventListener('click', async event => {
   if (!button) return;
   const action = button.dataset.action;
   const appId = Number(button.dataset.appId);
-  if (action === 'retry') { if (!state.bootstrap) await start(); else await loadRoute({ force: true }); }
+  if (action === 'library-transfer-open') {
+    transfer.open = true; drawTransfer(); document.querySelector('#library-transfer-input')?.focus();
+  }
+  else if (action === 'library-transfer-close' && !transfer.busy) { transfer.open = false; drawTransfer(); }
+  else if (action === 'library-transfer-select' && !transfer.busy) {
+    transfer.selected = selectedTransferGames().length === transfer.entries.length ? new Set() : new Set(transfer.entries.map(game => game.app_id)); drawTransfer();
+  }
+  else if (action === 'library-transfer-import') await importTransfer();
+  else if (action === 'library-export') await exportTransfer();
+  else if (action === 'library-copy') await copyTransfer();
+  else if (action === 'retry') { if (!state.bootstrap) await start(); else await loadRoute({ force: true }); }
   else if (action === 'retry-search') await runSearch();
   else if (action === 'language') {
     state.languages[button.dataset.eventId] = button.dataset.language === 'original' ? 'original' : 'ru';
@@ -372,6 +486,10 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  if (event.target.id === 'library-transfer-input') {
+    transfer.input = event.target.value; transfer.readEpoch++; transfer.entries = []; transfer.selected.clear();
+    transfer.message = 'Нажмите «Показать список», чтобы проверить изменения.'; drawTransfer(); return;
+  }
   if (event.target.id !== 'search-input') return;
   state.search.query = event.target.value;
   state.search.result = null;
@@ -390,7 +508,25 @@ function syncPreferenceNotes(form) {
   form.querySelector('#build-timing-note').hidden = !builds || form.elements.timing.value !== 'described';
 }
 
-document.addEventListener('change', event => {
+document.addEventListener('change', async event => {
+  if (event.target.id === 'library-transfer-file') {
+    const file = event.target.files?.[0];
+    if (!file || transfer.busy) return;
+    const epoch = ++transfer.readEpoch;
+    try {
+      if (file.size > LIBRARY_FILE_LIMIT) throw new Error('Файл слишком большой. Максимум 256 КиБ.');
+      const text = await file.text();
+      if (epoch !== transfer.readEpoch) return;
+      transfer.input = text; previewTransfer();
+    } catch (error) { if (epoch === transfer.readEpoch) { transfer.message = error.message; transfer.entries = []; transfer.selected.clear(); drawTransfer(); } }
+    finally { event.target.value = ''; }
+    return;
+  }
+  if (event.target.dataset.transferId) {
+    const appId = Number(event.target.dataset.transferId);
+    if (event.target.checked) transfer.selected.add(appId); else transfer.selected.delete(appId);
+    updateTransferSelection(); return;
+  }
   const scheduleForm = event.target.closest('#delivery-schedule-form');
   if (scheduleForm) {
     scheduleForm.querySelector('.schedule-daily').hidden = scheduleForm.elements.mode.value !== 'digest';
@@ -420,6 +556,7 @@ function readPreferences(form) {
 }
 
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'library-transfer-form') { event.preventDefault(); transfer.input = event.target.querySelector('#library-transfer-input').value; previewTransfer(); return; }
   if (event.target.id === 'search-form') { event.preventDefault(); await runSearch(); }
   if (event.target.id === 'delivery-schedule-form') {
     event.preventDefault();

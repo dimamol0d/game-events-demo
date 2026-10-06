@@ -171,6 +171,37 @@ main { max-width: 1380px; margin: 0 auto; padding: 39px 42px 70px; }
 .library-list .game-row { padding: 23px; }
 .library-list .game-art { width: 118px; height: 69px; }
 .library-list h3 { font-size: 1.1rem; }
+.library-transfer-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.library-transfer { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; margin-bottom: 26px; }
+.library-transfer .section-heading { align-items: flex-start; }
+.library-transfer h3 { margin: 0; }
+.library-transfer .subtle { max-width: 85ch; }
+.transfer-label { display: block; font-size: .86rem; font-weight: 600; margin: 14px 0 8px; }
+.library-transfer textarea { display: block; width: 100%; min-width: 0; resize: vertical; padding: 13px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--paper); font-size: .85rem; line-height: 1.6; overflow-wrap: anywhere; }
+.library-transfer-form, #library-transfer-form { min-width: 0; }
+.library-transfer form .library-transfer-actions { margin: 12px 0; }
+.transfer-file-label { cursor: pointer; }
+.transfer-file-input { display: block; max-width: 100%; font-size: .75rem; color: var(--muted); }
+.transfer-file-input::file-selector-button { display: none; }
+.transfer-preview { padding-top: 20px; margin-top: 20px; border-top: 1px solid var(--line); }
+.transfer-game-list { max-height: 310px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 15px; }
+.transfer-game { display: flex; gap: 12px; align-items: flex-start; padding: 13px; cursor: pointer; }
+.transfer-game + .transfer-game { border-top: 1px solid var(--line); }
+.transfer-game input { flex-shrink: 0; width: 18px; height: 18px; margin: 3px 0 0; accent-color: #407e62; }
+.transfer-game span { min-width: 0; overflow-wrap: anywhere; }
+.transfer-game strong { font-size: .87rem; }
+.transfer-game small { display: block; color: var(--muted); font-size: .74rem; margin-top: 5px; line-height: 1.5; }
+.transfer-message { font-size: .85rem; line-height: 1.6; margin: 14px 0 0; overflow-wrap: anywhere; }
+.transfer-message:empty { display: none; }
+#library-export-copy { margin-top: 20px; padding-top: 3px; border-top: 1px solid var(--line); }
+#library-export-copy .button { margin-top: 12px; }
+@media (max-width: 600px) {
+  .library-transfer { padding: 17px; }
+  .library-transfer-actions .button { white-space: normal; }
+  .library-transfer .section-heading { gap: 8px; }
+  .library-transfer .section-heading .button { padding: 8px; font-size: .73rem; }
+  .transfer-game { padding: 12px; }
+}
 .icon-button { width: 43px; height: 43px; display: grid; place-items: center; color: #45667e; background: var(--subtle-surface); border: 1px solid var(--line); border-radius: 8px; }
 .icon-button:hover { background: #d6e2ee; }
 .back-link { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 22px; color: var(--muted); font-size: .85rem; }
