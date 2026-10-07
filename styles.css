@@ -172,6 +172,32 @@ main { max-width: 1380px; margin: 0 auto; padding: 39px 42px 70px; }
 .library-list .game-art { width: 118px; height: 69px; }
 .library-list h3 { font-size: 1.1rem; }
 .library-transfer-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.feed-entry { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 24px; margin-bottom: 24px; border: 1px solid var(--line); border-left: 4px solid var(--focus); border-radius: 9px; background: var(--surface); }
+.feed-entry:hover { border-color: var(--focus); }
+.feed-entry > div { min-width: 0; }
+.feed-entry strong { font-size: 1.08rem; }
+.feed-entry p { color: var(--muted); font-size: .85rem; margin: 7px 0 0; max-width: 65ch; }
+.feed-entry-action { display: inline-flex; align-items: center; gap: 9px; font-size: .85rem; font-weight: 600; flex-shrink: 0; }
+.feed-entry-action .icon { transform: rotate(180deg); width: 16px; height: 16px; }
+.feed-filters { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.feed-filter { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--muted); font-size: .82rem; }
+.feed-filter select { display: block; width: 100%; min-width: 0; min-height: 46px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.feed-explanation { color: var(--muted); font-size: .82rem; max-width: 75ch; margin: 17px 0 27px; }
+.feed-timeline { display: grid; gap: 27px; }
+.feed-item { min-width: 0; }
+.feed-game-heading { font-size: 1rem; margin: 0 0 10px; overflow-wrap: anywhere; }
+.feed-game-heading a:hover { text-decoration: underline; }
+@media (max-width: 720px) {
+  .feed-entry { padding: 18px; gap: 14px; }
+  .feed-entry strong { font-size: 1rem; }
+  .feed-entry p { font-size: .78rem; }
+  .feed-entry-action { font-size: .76rem; }
+  .feed-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 13px; }
+  .feed-filter:first-child { grid-column: 1 / -1; }
+  .feed-filter { font-size: .76rem; }
+  .feed-filter select { font-size: .81rem; }
+  .feed-explanation { font-size: .77rem; }
+}
 .library-transfer { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; margin-bottom: 26px; }
 .library-transfer .section-heading { align-items: flex-start; }
 .library-transfer h3 { margin: 0; }

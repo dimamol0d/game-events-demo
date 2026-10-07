@@ -36,7 +36,64 @@ export function parseRoute(hash = '') {
   if (match && Number(match[2]) > 0 && Number.isSafeInteger(Number(match[2]))) {
     return { page: match[1], appId: Number(match[2]), eventId: new URLSearchParams(query).get('event') };
   }
-  return { page: ['home', 'search', 'library', 'inbox'].includes(path) ? path : 'home' };
+  return { page: ['home', 'search', 'library', 'inbox', 'feed'].includes(path) ? path : 'home' };
+}
+
+export function normalizeFeedFilters(value = {}) {
+  const appId = Number(value.app_id);
+  return { kind: ['all', 'updates', 'news', 'builds'].includes(value.kind) ? value.kind : 'all',
+    days: [0, 7, 30].includes(Number(value.days)) ? Number(value.days) : 7,
+    ...(Number.isSafeInteger(appId) && appId > 0 ? { app_id: appId } : {}) };
+}
+
+// The feed is a read-only snapshot: changing filters or leaving the page
+// invalidates even a response from a transport that does not honour abort.
+export function createFeedPager(fetchPage, onChange = () => {}) {
+  const state = { filters: normalizeFeedFilters(), events: [], nextCursor: null, hasMore: false,
+    loading: false, loaded: false, error: '', errorIsMore: false };
+  let epoch = 0;
+  let controller;
+  function cancel() {
+    epoch++;
+    controller?.abort(); controller = null;
+    state.loading = false;
+  }
+  function setFilters(filters, { force = false } = {}) {
+    const next = normalizeFeedFilters(filters);
+    if (!force && JSON.stringify(next) === JSON.stringify(state.filters)) return false;
+    cancel();
+    Object.assign(state, { filters: next, events: [], nextCursor: null, hasMore: false,
+      loaded: false, error: '', errorIsMore: false });
+    return true;
+  }
+  async function load({ more = false } = {}) {
+    if (state.loading || more && (!state.hasMore || !state.nextCursor)) return false;
+    const requestEpoch = ++epoch;
+    const requestController = new AbortController();
+    controller = requestController;
+    const cursor = more ? state.nextCursor : null;
+    state.loading = true; state.error = ''; state.errorIsMore = more;
+    onChange();
+    try {
+      const result = await fetchPage({ ...state.filters, limit: 30, ...(cursor ? { cursor } : {}) }, requestController.signal);
+      if (epoch !== requestEpoch) return false;
+      if (!Array.isArray(result?.events) || typeof result.has_more !== 'boolean'
+        || result.has_more && (typeof result.next_cursor !== 'string' || !result.next_cursor || result.next_cursor === cursor)) {
+        throw new Error('Сервер вернул неполную историю. Повторите попытку.');
+      }
+      state.events = more ? mergeEvents(state.events, result.events) : mergeEvents([], result.events);
+      state.nextCursor = result.has_more ? result.next_cursor : null;
+      state.hasMore = result.has_more; state.loaded = true;
+      return true;
+    } catch (error) {
+      if (epoch !== requestEpoch || requestController.signal.aborted) return false;
+      state.error = error.message || 'Не удалось загрузить историю. Повторите попытку.';
+      return false;
+    } finally {
+      if (epoch === requestEpoch) { state.loading = false; controller = null; onChange(); }
+    }
+  }
+  return { state, cancel, setFilters, load };
 }
 
 export function eventRoute(event) {

@@ -182,6 +182,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     bootstrap: () => request('/api/bootstrap'),
     search: (query, kind, signal) => request(`/api/search?${new URLSearchParams({ q: query, kind })}`, { signal }),
     library: () => request('/api/library'),
+    libraryFeed: (filters = {}, signal) => request(`/api/library/feed?${new URLSearchParams(filters)}`, { signal }),
     exportLibrary: () => request('/api/library/export'),
     importLibrary: payload => request('/api/library/import', { method: 'POST', body: payload }),
     add: appId => request('/api/library', { method: 'POST', body: { app_id: appId } }),

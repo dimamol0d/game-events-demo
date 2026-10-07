@@ -1,9 +1,9 @@
-import { api, ApiError } from './api.mjs?v=20261006-library1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, escapeHTML as h } from './model.mjs?v=20261006-library1';
-import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, loadingState, errorState, connectionScreen } from './views.mjs?v=20261006-library1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261006-library1';
-import { loadRuntimeConfig } from './config.mjs?v=20261006-library1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261006-library1';
+import { api, ApiError } from './api.mjs?v=20261007-feed1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, escapeHTML as h } from './model.mjs?v=20261007-feed1';
+import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, loadingState, errorState, connectionScreen } from './views.mjs?v=20261007-feed1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261007-feed1';
+import { loadRuntimeConfig } from './config.mjs?v=20261007-feed1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261007-feed1';
 
 const appRoot = document.querySelector('#app');
 const toastElement = document.querySelector('#toast');
@@ -20,6 +20,19 @@ let bootstrapUpdatedAt = 0;
 const mutations = new Set();
 const translationRequested = new Set();
 const transfer = { open: false, input: '', entries: [], selected: new Set(), busy: false, message: '', exportText: '', readEpoch: 0 };
+const feed = createFeedPager((filters, signal) => api.libraryFeed(filters, signal), () => {
+  if (state.route.page === 'feed') renderFeed();
+});
+let feedLibraryKey = '';
+
+function renderFeed({ focus = false } = {}) {
+  if (state.route.page !== 'feed') return;
+  const activeId = document.activeElement?.closest('#feed-filters') ? document.activeElement.id : null;
+  const scroll = window.scrollY;
+  setMain(feedPage(feed.state, state.bootstrap.library), focus);
+  if (activeId) document.getElementById(activeId)?.focus({ preventScroll: true });
+  window.scrollTo({ top: scroll, behavior: 'instant' });
+}
 
 function toast(message) {
   clearTimeout(toastTimer);
@@ -144,13 +157,13 @@ function updateUnread(count) {
   document.querySelectorAll('[data-unread]').forEach(badge => { badge.textContent = String(count || ''); badge.hidden = !count; });
 }
 function updateNavigation() {
-  const active = ['game', 'settings'].includes(state.route.page) ? 'library' : state.route.page;
+  const active = ['game', 'settings', 'feed'].includes(state.route.page) ? 'library' : state.route.page;
   document.querySelectorAll('.nav-item').forEach(link => {
     const current = link.hash === '#' + active;
     link.classList.toggle('active', current);
     if (current) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
   });
-  telegram.updateBack(['game', 'settings'].includes(state.route.page) ? () => { location.hash = state.route.page === 'settings' ? `#game/${state.route.appId}` : '#library'; } : null);
+  telegram.updateBack(['game', 'settings', 'feed'].includes(state.route.page) ? () => { location.hash = state.route.page === 'settings' ? `#game/${state.route.appId}` : '#library'; } : null);
 }
 
 async function syncBootstrap() {
@@ -265,12 +278,13 @@ async function loadRoute({ focus = true, force = false } = {}) {
   clearTimeout(overviewPollTimer);
   clearTimeout(searchTimer);
   searchController?.abort();
+  feed.cancel();
   const previous = state.route;
   state.route = parseRoute(location.hash);
   const route = state.route;
   const epoch = ++navigationEpoch;
   updateNavigation();
-  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки' }[route.page] || 'Главная') + ' — Игровой радар';
+  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления' }[route.page] || 'Главная') + ' — Игровой радар';
   if (previous.page !== route.page || previous.appId !== route.appId) window.scrollTo({ top: 0, behavior: 'instant' });
   if (route.page === 'home') {
     setMain(homePage(state.bootstrap, state.config), focus);
@@ -294,6 +308,16 @@ async function loadRoute({ focus = true, force = false } = {}) {
       catch (error) { if (epoch === navigationEpoch) setMain(errorState(error.message)); }
     }
     scheduleOverviewPoll(epoch);
+    return;
+  }
+  if (route.page === 'feed') {
+    const libraryKey = state.bootstrap.library.map(game => Number(game.app_id)).sort((a, b) => a - b).join(',');
+    const filters = { ...feed.state.filters };
+    if (filters.app_id && !state.bootstrap.library.some(game => Number(game.app_id) === filters.app_id)) delete filters.app_id;
+    feed.setFilters(filters, { force: feedLibraryKey !== libraryKey });
+    feedLibraryKey = libraryKey;
+    renderFeed({ focus });
+    if (state.bootstrap.library.length && (force || !feed.state.loaded)) await feed.load();
     return;
   }
   if (route.page === 'game' && state.game?.game.app_id === route.appId && !force) {
@@ -381,6 +405,14 @@ document.addEventListener('click', async event => {
   if (!button) return;
   const action = button.dataset.action;
   const appId = Number(button.dataset.appId);
+  if (action.startsWith('feed-')) {
+    if (state.route.page !== 'feed' || !state.bootstrap.library.length) return;
+    if (action === 'feed-more') await feed.load({ more: true });
+    else if (action === 'feed-retry') await feed.load({ more: feed.state.errorIsMore });
+    else if (action === 'feed-refresh') await feed.load();
+    else if (action === 'feed-all') { feed.setFilters({ kind: 'all', days: 0 }); await feed.load(); }
+    return;
+  }
   if (action === 'library-transfer-open') {
     transfer.open = true; drawTransfer(); document.querySelector('#library-transfer-input')?.focus();
   }
@@ -509,6 +541,12 @@ function syncPreferenceNotes(form) {
 }
 
 document.addEventListener('change', async event => {
+  const feedForm = event.target.closest('#feed-filters');
+  if (feedForm) {
+    if (state.route.page !== 'feed') return;
+    if (feed.setFilters({ kind: feedForm.elements.kind.value, days: feedForm.elements.days.value, app_id: feedForm.elements.app_id.value })) await feed.load();
+    return;
+  }
   if (event.target.id === 'library-transfer-file') {
     const file = event.target.files?.[0];
     if (!file || transfer.busy) return;
@@ -556,6 +594,7 @@ function readPreferences(form) {
 }
 
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'feed-filters') { event.preventDefault(); return; }
   if (event.target.id === 'library-transfer-form') { event.preventDefault(); transfer.input = event.target.querySelector('#library-transfer-input').value; previewTransfer(); return; }
   if (event.target.id === 'search-form') { event.preventDefault(); await runSearch(); }
   if (event.target.id === 'delivery-schedule-form') {
@@ -603,7 +642,7 @@ document.addEventListener('submit', async event => {
 window.addEventListener('hashchange', () => {
   if (state.bootstrap) loadRoute();
 });
-window.addEventListener('pagehide', () => { searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pagehide', () => { feed.cancel(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   telegram.init();
@@ -619,6 +658,7 @@ async function start() {
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
   searchController?.abort();
+  feed.cancel();
   state.bootstrap = null;
   appRoot.innerHTML = shell(state.route, state.bootstrap);
   setMain(loadingState('Подключаемся к приложению…'));
