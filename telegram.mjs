@@ -99,5 +99,18 @@ export function createTelegramAdapter(host = globalThis.window) {
       });
     } catch { return false; }
   }
-  return { init, updateBack, destroy, rawInitData, requestWriteAccess };
+  function openSteamLogin(url) {
+    // URL validation is repeated at the UI boundary; never open arbitrary
+    // provider URLs returned by an unexpected server response.
+    try {
+      const target = new URL(url);
+      if (target.protocol !== 'https:' || target.hostname !== 'steamcommunity.com'
+        || target.pathname !== '/openid/login' || target.username || target.password || target.port || target.hash
+        || target.searchParams.get('openid.mode') !== 'checkid_setup') return false;
+      if (host?.Telegram?.WebApp?.openLink) { host.Telegram.WebApp.openLink(target.href, { try_instant_view: false }); return true; }
+      if (!host?.open) return false;
+      host.open(target.href, '_blank', 'noopener,noreferrer'); return true;
+    } catch { return false; }
+  }
+  return { init, updateBack, destroy, rawInitData, requestWriteAccess, openSteamLogin };
 }

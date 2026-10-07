@@ -219,6 +219,17 @@ main { max-width: 1380px; margin: 0 auto; padding: 39px 42px 70px; }
 .transfer-game small { display: block; color: var(--muted); font-size: .74rem; margin-top: 5px; line-height: 1.5; }
 .transfer-message { font-size: .85rem; line-height: 1.6; margin: 14px 0 0; overflow-wrap: anywhere; }
 .transfer-message:empty { display: none; }
+.steam-account { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px 0; }
+.steam-account small { width: 100%; color: var(--muted); overflow-wrap: anywhere; }
+.steam-search { display: block; width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--paper); }
+.steam-selection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+.steam-game-list { max-height: 360px; }
+.steam-game-list .already-tracked { opacity: .72; cursor: default; }
+.steam-import-submit { margin: 14px 0; }
+.steam-import .button { white-space: normal; }
+.steam-import .section-heading { align-items: flex-start; }
+.steam-import .subtle { max-width: 80ch; }
+.profile-pill:hover { color: var(--focus); }
 #library-export-copy { margin-top: 20px; padding-top: 3px; border-top: 1px solid var(--line); }
 #library-export-copy .button { margin-top: 12px; }
 @media (max-width: 600px) {

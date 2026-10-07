@@ -36,7 +36,7 @@ export function parseRoute(hash = '') {
   if (match && Number(match[2]) > 0 && Number.isSafeInteger(Number(match[2]))) {
     return { page: match[1], appId: Number(match[2]), eventId: new URLSearchParams(query).get('event') };
   }
-  return { page: ['home', 'search', 'library', 'inbox', 'feed'].includes(path) ? path : 'home' };
+  return { page: ['home', 'search', 'library', 'inbox', 'feed', 'profile'].includes(path) ? path : 'home' };
 }
 
 export function normalizeFeedFilters(value = {}) {

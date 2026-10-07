@@ -77,7 +77,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     return waitFor(task.promise, signal);
   }
 
-  async function send(path, { method = 'GET', body, signal } = {}, authorization = '', target = endpoint()) {
+  async function send(path, { method = 'GET', body, signal, anonymous = false } = {}, authorization = '', target = endpoint()) {
     if (!path.startsWith('/api/') || /[\r\n]/.test(path)) throw new ApiError('Некорректный адрес запроса.');
     abortIfNeeded(signal);
     const headers = { Accept: 'application/json' };
@@ -98,12 +98,12 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
       let result;
       try { result = await response.json(); }
       catch {
-        if (response.status === 401) throw new ApiError('Сеанс Telegram истёк или не подтверждён. Закройте приложение и откройте его снова через бота.', 'auth_expired', 401);
+        if (response.status === 401 && !anonymous) throw new ApiError('Сеанс Telegram истёк или не подтверждён. Закройте приложение и откройте его снова через бота.', 'auth_expired', 401);
         throw new ApiError(target.remote ? 'Домашний сервер не ответил данными приложения. Возможно, компьютер выключен или соединение недоступно.' : 'Сервер вернул непонятный ответ. Повторите попытку.', target.remote ? 'offline' : 'invalid_response');
       }
       if (!response.ok) {
-        const message = response.status === 401 ? 'Сеанс Telegram истёк или не подтверждён. Закройте приложение и откройте его снова через бота.' : (result.message || `Не удалось выполнить запрос (${response.status}).`);
-        throw new ApiError(message, response.status === 401 ? 'auth_expired' : result.error || 'request_failed', response.status);
+        const message = response.status === 401 && !anonymous ? 'Сеанс Telegram истёк или не подтверждён. Закройте приложение и откройте его снова через бота.' : (result.message || `Не удалось выполнить запрос (${response.status}).`);
+        throw new ApiError(message, response.status === 401 && !anonymous ? 'auth_expired' : result.error || 'request_failed', response.status);
       }
       return result;
     } catch (error) {
@@ -185,6 +185,18 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     libraryFeed: (filters = {}, signal) => request(`/api/library/feed?${new URLSearchParams(filters)}`, { signal }),
     exportLibrary: () => request('/api/library/export'),
     importLibrary: payload => request('/api/library/import', { method: 'POST', body: payload }),
+    steamStatus: signal => request('/api/profile/steam', { signal }),
+    linkSteam: () => request('/api/profile/steam/link', { method: 'POST', body: {} }),
+    unlinkSteam: () => request('/api/profile/steam', { method: 'DELETE' }),
+    steamLibrary: signal => request('/api/profile/steam/library', { signal }),
+    // An external Steam browser has no Telegram initData. Pending state on the
+    // server binds this assertion to the profile that initiated the login.
+    steamCallback: async payload => {
+      if (!config.configured) throw new ApiError('Адрес домашнего сервера ещё не настроен.', 'not_configured');
+      const target = endpoint();
+      try { return await send('/api/auth/steam/callback', { method: 'POST', body: payload, anonymous: true }, '', target); }
+      catch (error) { if (isTransportFailure(error)) await recover(target, error); throw error; }
+    },
     add: appId => request('/api/library', { method: 'POST', body: { app_id: appId } }),
     remove: appId => request(`/api/library/${appId}`, { method: 'DELETE' }),
     game: (appId, offset = 0) => request(`/api/games/${appId}?${new URLSearchParams({ offset, limit: 30 })}`),

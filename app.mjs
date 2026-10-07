@@ -1,9 +1,14 @@
-import { api, ApiError } from './api.mjs?v=20261007-feed1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, escapeHTML as h } from './model.mjs?v=20261007-feed1';
-import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, loadingState, errorState, connectionScreen } from './views.mjs?v=20261007-feed1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261007-feed1';
-import { loadRuntimeConfig } from './config.mjs?v=20261007-feed1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261007-feed1';
+import { api, ApiError } from './api.mjs?v=20261007-steam1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, escapeHTML as h } from './model.mjs?v=20261007-steam1';
+import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261007-steam1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261007-steam1';
+import { loadRuntimeConfig } from './config.mjs?v=20261007-steam1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261007-steam1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261007-steam1';
+
+// Clear the external assertion before runtime discovery, Telegram SDK loading
+// or authentication. The callback browser does not need a Telegram session.
+const steamCallback = consumeSteamCallback(window);
 
 const appRoot = document.querySelector('#app');
 const toastElement = document.querySelector('#toast');
@@ -20,6 +25,11 @@ let bootstrapUpdatedAt = 0;
 const mutations = new Set();
 const translationRequested = new Set();
 const transfer = { open: false, input: '', entries: [], selected: new Set(), busy: false, message: '', exportText: '', readEpoch: 0 };
+const steam = { open: false, status: null, loginURL: '', loaded: false, busy: '', message: '', error: '', pollCount: 0 };
+const steamSelection = createSteamSelection(LIBRARY_LIMIT);
+const steamReads = createSteamReadGuard();
+let steamPollTimer;
+let steamCallbackBusy = false;
 const feed = createFeedPager((filters, signal) => api.libraryFeed(filters, signal), () => {
   if (state.route.page === 'feed') renderFeed();
 });
@@ -50,8 +60,135 @@ function setMain(html, focus = false) {
   if (schedule) main().querySelector('.delivery-schedule')?.replaceWith(schedule);
   if (transferPanel && main().querySelector('#library-transfer')) main().querySelector('#library-transfer').replaceWith(transferPanel);
   drawTransfer();
+  drawSteam();
   if (active?.isConnected) active.focus({ preventScroll: true });
   if (focus) main().focus({ preventScroll: true });
+}
+
+function drawSteam({ rowsOnly = false } = {}) {
+  const panel = document.querySelector('#steam-panel');
+  if (!panel || !state.bootstrap) return;
+  panel.hidden = state.route.page !== 'profile' && !steam.open;
+  if (panel.hidden) return;
+  steamSelection.reconcile(state.bootstrap.library);
+  const input = panel.querySelector('#steam-game-search');
+  const focused = document.activeElement === input;
+  const selectionStart = focused ? input.selectionStart : null;
+  const selectionEnd = focused ? input.selectionEnd : null;
+  const data = { ...steam, profile: state.route.page === 'profile' };
+  if (rowsOnly && panel.querySelector('#steam-game-results')) panel.querySelector('#steam-game-results').innerHTML = steamSelectionRows(data, steamSelection.state, steamSelection.filtered());
+  else panel.innerHTML = steamPanel(data, steamSelection.state, steamSelection.filtered());
+  if (focused && !rowsOnly) {
+    const next = panel.querySelector('#steam-game-search');
+    next?.focus({ preventScroll: true });
+    try { next?.setSelectionRange(selectionStart, selectionEnd); } catch { /* search fields on some clients do not support ranges */ }
+  }
+}
+
+function cancelSteamReads() {
+  clearTimeout(steamPollTimer);
+  steamReads.cancel();
+  if (steam.busy === 'Проверяем подключение…' || steam.busy === 'Загружаем игры из Steam…') steam.busy = '';
+}
+
+function scheduleSteamPoll() {
+  clearTimeout(steamPollTimer);
+  if (!steam.status?.pending || steam.busy || document.hidden || !['library', 'profile'].includes(state.route.page)
+    || state.route.page === 'library' && !steam.open || steam.pollCount >= 12
+    || Date.parse(steam.status.pending.expires_at) <= Date.now()) return;
+  steamPollTimer = setTimeout(() => { steam.pollCount++; refreshSteam({ preview: true }); }, 5000);
+}
+
+async function refreshSteam({ preview = true, autoOpen = false, forceLibrary = false } = {}) {
+  if (!state.bootstrap || steam.busy) return;
+  const read = steamReads.begin();
+  steam.busy = 'Проверяем подключение…'; steam.error = ''; drawSteam();
+  try {
+    const status = await api.steamStatus(read.signal);
+    if (!read.current()) return;
+    const changed = steam.status?.account?.steam_id !== status.account?.steam_id;
+    steam.status = status;
+    if (changed || !status.connected) { steamSelection.clear(); steam.loaded = false; }
+    if (status.connected || !status.pending) steam.loginURL = '';
+    if (autoOpen && status.pending) steam.open = true;
+    if (preview && status.connected && (forceLibrary || !steam.loaded)) {
+      steam.busy = 'Загружаем игры из Steam…'; drawSteam();
+      const result = await api.steamLibrary(read.signal);
+      if (!read.current()) return;
+      steamSelection.setGames(result.games, state.bootstrap.library);
+      steam.loaded = true;
+      steam.message = result.games.length ? 'Список получен. Выберите игры — добавляем только после вашего нажатия.' : 'В этом Steam-аккаунте нет игр, доступных для импорта. Можно добавить интересующую игру обычным поиском.';
+    }
+  } catch (error) { if (read.current()) steam.error = error.message; }
+  finally { if (read.current()) { steam.busy = ''; drawSteam(); scheduleSteamPoll(); } }
+}
+
+async function connectSteam() {
+  if (steam.busy) return;
+  cancelSteamReads(); steam.busy = 'Готовим вход в Steam…'; steam.error = ''; steam.message = ''; drawSteam();
+  try {
+    const result = await api.linkSteam();
+    const url = safeSteamLoginURL(result.url);
+    if (!url) throw new Error('Сервер вернул неправильную ссылку входа. Повторите попытку.');
+    steam.loginURL = url;
+    steam.status = { ...(steam.status || {}), pending: { expires_at: result.expires_at } };
+    steam.pollCount = 0;
+    steam.message = 'Ссылка готова. Нажмите «Продолжить в Steam», подтвердите вход и вернитесь сюда.';
+  } catch (error) { steam.error = error.message; }
+  finally { steam.busy = ''; drawSteam(); scheduleSteamPoll(); }
+}
+
+async function unlinkSteam() {
+  if (steam.busy) return;
+  cancelSteamReads(); steam.busy = 'Отвязываем Steam…'; steam.error = ''; drawSteam();
+  try {
+    const result = await api.unlinkSteam();
+    steam.status = result; steam.loginURL = ''; steamSelection.clear(); steam.loaded = false;
+    steam.message = 'Steam отвязан. Ваши игры и настройки в радаре сохранены.';
+  } catch (error) { steam.error = error.message; }
+  finally { steam.busy = ''; drawSteam(); }
+}
+
+async function importSteamGames() {
+  if (steam.busy || transfer.busy) return;
+  // Capacity may have changed since Steam was fetched or in another screen.
+  steamSelection.reconcile(state.bootstrap.library);
+  const games = steamSelection.selectedGames();
+  if (!games.length) { drawSteam(); return; }
+  cancelSteamReads(); steam.busy = 'Добавляем выбранные игры…'; steam.error = ''; drawSteam();
+  const result = await importLibraryBatches(games, payload => api.importLibrary(payload), progress => {
+    const confirmed = new Set(progress.batch.map(game => game.app_id));
+    for (const id of confirmed) { steamSelection.state.selected.delete(id); steamSelection.state.existing.add(id); }
+    steam.message = `Обработано ${progress.completed} из ${games.length}. Добавлено: ${progress.added}. Уже отслеживаются: ${progress.alreadyTracking}.`;
+    drawSteam();
+  });
+  steam.message = `Добавлено: ${result.added}. Уже отслеживаются: ${result.alreadyTracking}.`;
+  if (result.error) {
+    const failedNames = result.remaining.slice(0, 5).map(game => `${game.name} (AppID ${game.app_id})`).join(', ');
+    steam.error = `${result.error.message} Не подтверждена часть: ${failedNames}. Подтверждённые игры сохранены. Остальные остаются выбраны: можно снять выбор с проблемной игры и повторить. При потере ответа часть игр могла добавиться; повтор не создаёт дубликаты и сохраняет настройки.`;
+  } else steam.message += ' Готово.';
+  try { await syncBootstrap(); } catch { steam.error += ' Не удалось обновить библиотеку на экране. Проверьте её перед повтором.'; }
+  steam.busy = ''; renderAfterLibraryChange(); drawSteam();
+  if (!result.error) toast(`Добавлено из Steam: ${result.added}.`);
+}
+
+async function verifySteamCallback() {
+  if (!steamCallback || steamCallbackBusy) return;
+  steamCallbackBusy = true;
+  appRoot.innerHTML = steamCallbackScreen({}, state.config || { botURL: 'https://t.me/my_steam_radar_dm_bot' });
+  try {
+    if (steamCallback.error) throw new Error(steamCallback.error);
+    state.config = await loadRuntimeConfig();
+    api.configure(state.config, () => '', () => loadRuntimeConfig());
+    await api.steamCallback({ query: steamCallback.query });
+    // Retain no assertion after success. Even on a lost response the original
+    // app can check the persisted connection without replaying the assertion.
+    steamCallback.query = '';
+    appRoot.innerHTML = steamCallbackScreen({ done: true }, state.config);
+  } catch (error) {
+    const transport = ['offline', 'timeout', 'not_configured'].includes(error.code) || !state.config;
+    appRoot.innerHTML = steamCallbackScreen({ error: error.message + ' Вернитесь в приложение и нажмите «Проверить подключение»: при потере ответа вход мог уже завершиться.', retry: transport && Boolean(steamCallback.query) }, state.config || { botURL: 'https://t.me/my_steam_radar_dm_bot' });
+  } finally { steamCallbackBusy = false; }
 }
 
 function selectedTransferGames() { return transfer.entries.filter(game => transfer.selected.has(game.app_id)); }
@@ -96,7 +233,7 @@ function previewTransfer() {
 }
 
 async function importTransfer() {
-  if (transfer.busy) return;
+  if (transfer.busy || steam.busy) return;
   const games = selectedTransferGames();
   if (!games.length) return;
   const existing = new Set(state.bootstrap.library.map(game => Number(game.app_id)));
@@ -163,11 +300,12 @@ function updateNavigation() {
     link.classList.toggle('active', current);
     if (current) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
   });
-  telegram.updateBack(['game', 'settings', 'feed'].includes(state.route.page) ? () => { location.hash = state.route.page === 'settings' ? `#game/${state.route.appId}` : '#library'; } : null);
+  telegram.updateBack(['game', 'settings', 'feed', 'profile'].includes(state.route.page) ? () => { location.hash = state.route.page === 'settings' ? `#game/${state.route.appId}` : '#library'; } : null);
 }
 
 async function syncBootstrap() {
   state.bootstrap = await api.bootstrap();
+  steamSelection.reconcile(state.bootstrap.library);
   bootstrapUpdatedAt = Date.now();
   updateUnread(state.bootstrap.unread_count);
   return state.bootstrap;
@@ -252,11 +390,11 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
   if (!pending) return;
   overviewPollTimer = setTimeout(async () => {
     if (epoch !== navigationEpoch || document.hidden) return;
-    if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
+    if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden]), #steam-panel:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
     try {
       await syncBootstrap();
       if (epoch !== navigationEpoch) return;
-      if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
+      if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden]), #steam-panel:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
       const scroll = window.scrollY;
       if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
       else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
@@ -279,12 +417,13 @@ async function loadRoute({ focus = true, force = false } = {}) {
   clearTimeout(searchTimer);
   searchController?.abort();
   feed.cancel();
+  cancelSteamReads();
   const previous = state.route;
   state.route = parseRoute(location.hash);
   const route = state.route;
   const epoch = ++navigationEpoch;
   updateNavigation();
-  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления' }[route.page] || 'Главная') + ' — Игровой радар';
+  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления', profile: 'Мой профиль' }[route.page] || 'Главная') + ' — Игровой радар';
   if (previous.page !== route.page || previous.appId !== route.appId) window.scrollTo({ top: 0, behavior: 'instant' });
   if (route.page === 'home') {
     setMain(homePage(state.bootstrap, state.config), focus);
@@ -293,6 +432,12 @@ async function loadRoute({ focus = true, force = false } = {}) {
       catch (error) { if (epoch === navigationEpoch) toast(error.message); }
     }
     scheduleOverviewPoll(epoch);
+    refreshSteam({ preview: false });
+    return;
+  }
+  if (route.page === 'profile') {
+    setMain(profilePage(state.bootstrap.profile), focus);
+    await refreshSteam({ preview: false });
     return;
   }
   if (route.page === 'search') {
@@ -308,6 +453,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
       catch (error) { if (epoch === navigationEpoch) setMain(errorState(error.message)); }
     }
     scheduleOverviewPoll(epoch);
+    if (epoch === navigationEpoch) refreshSteam({ preview: steam.open, autoOpen: true });
     return;
   }
   if (route.page === 'feed') {
@@ -405,6 +551,25 @@ document.addEventListener('click', async event => {
   if (!button) return;
   const action = button.dataset.action;
   const appId = Number(button.dataset.appId);
+  if (action === 'steam-callback-retry') { await verifySteamCallback(); return; }
+  if (action.startsWith('steam-')) {
+    if (!state.bootstrap || !['library', 'profile'].includes(state.route.page)) return;
+    if (action === 'steam-open') { steam.open = true; steam.pollCount = 0; drawSteam(); await refreshSteam(); }
+    else if (action === 'steam-close' && !steam.busy) { steam.open = false; cancelSteamReads(); drawSteam(); }
+    else if (action === 'steam-connect') await connectSteam();
+    else if (action === 'steam-continue' && !steam.busy && steam.loginURL) {
+      if (!telegram.openSteamLogin(steam.loginURL)) toast('Браузер не открылся. Повторите нажатие или разрешите открытие ссылок.');
+      else { steam.message = 'Подтвердите вход в Steam, затем вернитесь сюда и проверьте подключение.'; drawSteam(); scheduleSteamPoll(); }
+    }
+    else if (action === 'steam-check') { steam.pollCount = 0; await refreshSteam({ preview: true }); }
+    else if (action === 'steam-library') await refreshSteam({ forceLibrary: true });
+    else if (action === 'steam-unlink') await unlinkSteam();
+    else if (action === 'steam-import') await importSteamGames();
+    else if (action === 'steam-select' && !steam.busy) { steamSelection.selectFiltered(); drawSteam({ rowsOnly: true }); }
+    else if (action === 'steam-clear' && !steam.busy) { steamSelection.state.selected.clear(); drawSteam({ rowsOnly: true }); }
+    else if (action === 'steam-more' && !steam.busy) { steamSelection.state.shown += 60; drawSteam({ rowsOnly: true }); }
+    return;
+  }
   if (action.startsWith('feed-')) {
     if (state.route.page !== 'feed' || !state.bootstrap.library.length) return;
     if (action === 'feed-more') await feed.load({ more: true });
@@ -518,6 +683,9 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  if (event.target.id === 'steam-game-search' && !steam.busy) {
+    steamSelection.state.query = event.target.value; steamSelection.state.shown = 60; drawSteam({ rowsOnly: true }); return;
+  }
   if (event.target.id === 'library-transfer-input') {
     transfer.input = event.target.value; transfer.readEpoch++; transfer.entries = []; transfer.selected.clear();
     transfer.message = 'Нажмите «Показать список», чтобы проверить изменения.'; drawTransfer(); return;
@@ -541,6 +709,12 @@ function syncPreferenceNotes(form) {
 }
 
 document.addEventListener('change', async event => {
+  if (event.target.dataset.steamId) {
+    if (steam.busy) return;
+    const accepted = steamSelection.toggle(Number(event.target.dataset.steamId), event.target.checked);
+    if (!accepted) toast('Выбрано максимально возможное число новых игр. Снимите выбор с другой игры.');
+    drawSteam({ rowsOnly: true }); return;
+  }
   const feedForm = event.target.closest('#feed-filters');
   if (feedForm) {
     if (state.route.page !== 'feed') return;
@@ -642,16 +816,23 @@ document.addEventListener('submit', async event => {
 window.addEventListener('hashchange', () => {
   if (state.bootstrap) loadRoute();
 });
-window.addEventListener('pagehide', () => { feed.cancel(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pagehide', () => { feed.cancel(); cancelSteamReads(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   telegram.init();
   if (state.bootstrap) loadRoute({ focus: false, force: true });
 });
+window.addEventListener('focus', () => {
+  if (state.bootstrap && !document.hidden && ['library', 'profile'].includes(state.route.page)
+    && (steam.open || state.route.page === 'profile') && (steam.status?.pending || steam.loginURL)) refreshSteam({ preview: true });
+});
 document.addEventListener('visibilitychange', () => {
   if (!state.bootstrap) return;
-  if (document.hidden) { clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); }
-  else { scheduleGamePoll(navigationEpoch); scheduleOverviewPoll(navigationEpoch); }
+  if (document.hidden) { clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelSteamReads(); }
+  else {
+    scheduleGamePoll(navigationEpoch); scheduleOverviewPoll(navigationEpoch);
+    if (['library', 'profile'].includes(state.route.page) && (steam.open || state.route.page === 'profile')) refreshSteam({ preview: true });
+  }
 });
 
 async function start() {
@@ -659,6 +840,12 @@ async function start() {
   clearTimeout(overviewPollTimer);
   searchController?.abort();
   feed.cancel();
+  cancelSteamReads();
+  if (steamCallback) { await verifySteamCallback(); return; }
+  // A fresh Telegram authentication may identify another profile. Do not show
+  // a previous owner's linked Steam account or selection while bootstrap loads.
+  steam.status = null; steam.loginURL = ''; steam.loaded = false; steam.busy = ''; steam.message = ''; steam.error = '';
+  steamSelection.clear();
   state.bootstrap = null;
   appRoot.innerHTML = shell(state.route, state.bootstrap);
   setMain(loadingState('Подключаемся к приложению…'));
