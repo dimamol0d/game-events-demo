@@ -15,6 +15,7 @@ const toastElement = document.querySelector('#toast');
 const telegram = createTelegramAdapter();
 const state = { bootstrap: null, route: parseRoute(location.hash), search: { query: '', kind: 'game', result: null }, game: null, notifications: null, config: null, languages: {} };
 let navigationEpoch = 0;
+let authenticationEpoch = 0;
 let searchEpoch = 0;
 let searchTimer;
 let searchController;
@@ -75,7 +76,7 @@ function drawSteam({ rowsOnly = false } = {}) {
   const focused = document.activeElement === input;
   const selectionStart = focused ? input.selectionStart : null;
   const selectionEnd = focused ? input.selectionEnd : null;
-  const data = { ...steam, profile: state.route.page === 'profile' };
+  const data = { ...steam, busy: steam.busy || (transfer.busy ? 'Добавление или сохранение списка игр…' : ''), profile: state.route.page === 'profile' };
   if (rowsOnly && panel.querySelector('#steam-game-results')) panel.querySelector('#steam-game-results').innerHTML = steamSelectionRows(data, steamSelection.state, steamSelection.filtered());
   else panel.innerHTML = steamPanel(data, steamSelection.state, steamSelection.filtered());
   if (focused && !rowsOnly) {
@@ -102,8 +103,9 @@ function scheduleSteamPoll() {
 async function refreshSteam({ preview = true, autoOpen = false, forceLibrary = false } = {}) {
   if (!state.bootstrap || steam.busy) return;
   const read = steamReads.begin();
-  steam.busy = 'Проверяем подключение…'; steam.error = ''; drawSteam();
+  steam.busy = 'Проверяем подключение…'; steam.error = '';
   try {
+    drawSteam();
     const status = await api.steamStatus(read.signal);
     if (!read.current()) return;
     const changed = steam.status?.account?.steam_id !== status.account?.steam_id;
@@ -125,8 +127,9 @@ async function refreshSteam({ preview = true, autoOpen = false, forceLibrary = f
 
 async function connectSteam() {
   if (steam.busy) return;
-  cancelSteamReads(); steam.busy = 'Готовим вход в Steam…'; steam.error = ''; steam.message = ''; drawSteam();
+  cancelSteamReads(); steam.busy = 'Готовим вход в Steam…'; steam.error = ''; steam.message = '';
   try {
+    drawSteam();
     const result = await api.linkSteam();
     const url = safeSteamLoginURL(result.url);
     if (!url) throw new Error('Сервер вернул неправильную ссылку входа. Повторите попытку.');
@@ -140,8 +143,9 @@ async function connectSteam() {
 
 async function unlinkSteam() {
   if (steam.busy) return;
-  cancelSteamReads(); steam.busy = 'Отвязываем Steam…'; steam.error = ''; drawSteam();
+  cancelSteamReads(); steam.busy = 'Отвязываем Steam…'; steam.error = '';
   try {
+    drawSteam();
     const result = await api.unlinkSteam();
     steam.status = result; steam.loginURL = ''; steamSelection.clear(); steam.loaded = false;
     steam.message = 'Steam отвязан. Ваши игры и настройки в радаре сохранены.';
@@ -150,26 +154,67 @@ async function unlinkSteam() {
 }
 
 async function importSteamGames() {
-  if (steam.busy || transfer.busy) return;
+  if (!state.bootstrap || steam.busy || transfer.busy) return;
+  const owner = authenticationEpoch;
+  const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
   // Capacity may have changed since Steam was fetched or in another screen.
   steamSelection.reconcile(state.bootstrap.library);
   const games = steamSelection.selectedGames();
   if (!games.length) { drawSteam(); return; }
-  cancelSteamReads(); steam.busy = 'Добавляем выбранные игры…'; steam.error = ''; drawSteam();
-  const result = await importLibraryBatches(games, payload => api.importLibrary(payload), progress => {
-    const confirmed = new Set(progress.batch.map(game => game.app_id));
-    for (const id of confirmed) { steamSelection.state.selected.delete(id); steamSelection.state.existing.add(id); }
-    steam.message = `Обработано ${progress.completed} из ${games.length}. Добавлено: ${progress.added}. Уже отслеживаются: ${progress.alreadyTracking}.`;
+  cancelSteamReads(); steam.busy = 'Добавляем выбранные игры…'; steam.error = '';
+  try {
     drawSteam();
-  });
-  steam.message = `Добавлено: ${result.added}. Уже отслеживаются: ${result.alreadyTracking}.`;
-  if (result.error) {
-    const failedNames = result.remaining.slice(0, 5).map(game => `${game.name} (AppID ${game.app_id})`).join(', ');
-    steam.error = `${result.error.message} Не подтверждена часть: ${failedNames}. Подтверждённые игры сохранены. Остальные остаются выбраны: можно снять выбор с проблемной игры и повторить. При потере ответа часть игр могла добавиться; повтор не создаёт дубликаты и сохраняет настройки.`;
-  } else steam.message += ' Готово.';
-  try { await syncBootstrap(); } catch { steam.error += ' Не удалось обновить библиотеку на экране. Проверьте её перед повтором.'; }
-  steam.busy = ''; renderAfterLibraryChange(); drawSteam();
-  if (!result.error) toast(`Добавлено из Steam: ${result.added}.`);
+    const result = await importLibraryBatches(games, payload => {
+      if (!current()) throw new Error('Профиль приложения изменился. Откройте свою библиотеку и проверьте результат.');
+      return api.importSteamLibrary(payload);
+    }, progress => {
+      if (!current()) return;
+      rememberImportedGames(progress);
+      for (const game of progress.batch) steamSelection.state.selected.delete(game.app_id);
+      steamSelection.markSkipped(progress.result.skipped || []);
+      steam.message = `Обработано ${progress.completed} из ${games.length}. Добавлено: ${progress.added}. Уже отслеживаются: ${progress.alreadyTracking}. Пропущено: ${progress.skipped.length}.`;
+      drawSteam();
+    });
+    if (!current()) return;
+    steam.message = `Добавлено: ${result.added}. Уже отслеживаются: ${result.alreadyTracking}.`;
+    if (result.skipped.length) steam.message += ` Пропущено приложений, кроме игр и DLC: ${result.skipped.length} (${result.skipped.slice(0, 5).map(game => game.name).join(', ')}${result.skipped.length > 5 ? ` и ещё ${result.skipped.length - 5}` : ''}).`;
+    if (result.error) {
+      const failedNames = result.remaining.slice(0, 5).map(game => `${game.name} (AppID ${game.app_id})`).join(', ');
+      steam.error = `${result.error.message} ${failedNames ? `Остались выбранными: ${failedNames}. ` : ''}Подтверждённые игры сохранены. Можно повторить добавление: дубликаты не создаются, настройки сохраняются.`;
+    } else steam.message += ' Готово.';
+    steam.busy = 'Обновляем библиотеку на экране…'; drawSteam();
+    try { await syncBootstrap(); }
+    catch { if (current()) steam.error += ' Не удалось обновить библиотеку на экране. Проверьте её перед повтором.'; }
+    if (current() && !result.error) toast(`Добавлено из Steam: ${result.added}.`);
+  } catch (error) {
+    if (current()) steam.error = `${error.message || 'Не удалось завершить добавление.'} Подтверждённые игры сохранены. Проверьте библиотеку и повторите оставшийся выбор: дубликаты не создаются.`;
+  } finally {
+    if (current()) { steam.busy = ''; restoreLibraryImportUI(); }
+  }
+}
+
+function rememberImportedGames(progress) {
+  const confirmed = new Set(progress.batch.map(game => game.app_id));
+  const library = new Map(state.bootstrap.library.map(game => [Number(game.app_id), game]));
+  // Use server summaries, never client names or invented preferences. This
+  // also keeps confirmed rows disabled if the final bootstrap read fails.
+  for (const game of progress.result.games || []) {
+    if (confirmed.has(game.app_id)) library.set(game.app_id, game);
+  }
+  state.bootstrap.library = [...library.values()];
+}
+
+function restoreLibraryImportUI() {
+  // State is unlocked before touching the DOM. A render failure must not
+  // skip restoration of the other import panel or leave navigation disabled.
+  let renderFailed = false;
+  try { renderAfterLibraryChange(); } catch { renderFailed = true; }
+  try { drawTransfer(); } catch { renderFailed = true; }
+  try { drawSteam(); } catch { renderFailed = true; }
+  if (renderFailed) {
+    document.querySelectorAll('[data-action="steam-check"], [data-action="steam-library"], [data-action="steam-close"], [data-action="library-transfer-close"]').forEach(control => { control.disabled = false; });
+    toast('Не удалось обновить часть экрана — перейдите в другую вкладку и вернитесь в библиотеку, чтобы проверить результат.');
+  }
 }
 
 async function verifySteamCallback() {
@@ -204,7 +249,7 @@ function drawTransfer() {
   panel.querySelector('#library-export-text').value = transfer.exportText;
   const knownIds = new Set(state.bootstrap?.library.map(game => Number(game.app_id)) || []);
   panel.querySelector('#library-transfer-preview').innerHTML = transfer.entries.length ? `<div class="transfer-preview"><div class="section-heading"><h3>Проверьте выбор</h3><button class="button small quiet" type="button" data-action="library-transfer-select">${selectedTransferGames().length === transfer.entries.length ? 'Снять выбор' : 'Выбрать все'}</button></div><div class="transfer-game-list">${transfer.entries.map(game => `<label class="transfer-game"><input type="checkbox" data-transfer-id="${game.app_id}" ${transfer.selected.has(game.app_id) ? 'checked' : ''}><span><strong>${h(game.name || `Игра Steam #${game.app_id}`)}</strong><small>AppID ${game.app_id}${knownIds.has(game.app_id) ? ' · Уже в библиотеке, настройки сохранятся' : ' · Проверим игру перед добавлением'}</small></span></label>`).join('')}</div><p class="subtle">Настройки уже добавленных игр сохраняются. Новые игры из файла получат сохранённые настройки, из ссылок — режим «Все обновления». Доставка сообщений и расписание профиля не меняются.</p><button class="button primary" type="button" data-action="library-transfer-import"></button></div>` : '';
-  panel.querySelectorAll('input,textarea,button').forEach(control => { control.disabled = transfer.busy; });
+  panel.querySelectorAll('input,textarea,button').forEach(control => { control.disabled = transfer.busy || Boolean(steam.busy); });
   // A backup stays readable and selectable while another request is pending.
   panel.querySelector('#library-export-text').disabled = false;
   updateTransferSelection();
@@ -214,7 +259,7 @@ function updateTransferSelection() {
   const button = document.querySelector('[data-action="library-transfer-import"]');
   if (!button) return;
   const count = selectedTransferGames().length;
-  button.disabled = transfer.busy || !count;
+  button.disabled = transfer.busy || Boolean(steam.busy) || !count;
   button.textContent = transfer.busy ? 'Добавляем игры…' : `Добавить выбранные (${count})`;
   const select = document.querySelector('[data-action="library-transfer-select"]');
   if (select) select.textContent = count === transfer.entries.length ? 'Снять выбор' : 'Выбрать все';
@@ -233,37 +278,54 @@ function previewTransfer() {
 }
 
 async function importTransfer() {
-  if (transfer.busy || steam.busy) return;
+  if (!state.bootstrap || transfer.busy || steam.busy) return;
+  const owner = authenticationEpoch;
+  const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
   const games = selectedTransferGames();
   if (!games.length) return;
   const existing = new Set(state.bootstrap.library.map(game => Number(game.app_id)));
   if (existing.size + games.filter(game => !existing.has(game.app_id)).length > LIBRARY_LIMIT) {
     transfer.message = `В библиотеке может быть до ${LIBRARY_LIMIT} игр. Уменьшите выбор или уберите ненужные игры.`; drawTransfer(); return;
   }
-  transfer.busy = true; transfer.message = `Проверяем и добавляем ${games.length} игр…`; drawTransfer();
-  const result = await importLibraryBatches(games, payload => api.importLibrary(payload), progress => {
-    const confirmed = new Set(progress.batch.map(game => game.app_id));
-    transfer.entries = transfer.entries.filter(game => !confirmed.has(game.app_id));
-    for (const appId of confirmed) transfer.selected.delete(appId);
-    transfer.message = `Обработано ${progress.completed} из ${games.length}. Добавлено: ${progress.added}. Уже отслеживаются: ${progress.alreadyTracking}.`;
+  transfer.busy = true; transfer.message = `Проверяем и добавляем ${games.length} игр…`;
+  try {
     drawTransfer();
-  });
-  transfer.message = `Добавлено: ${result.added}. Уже отслеживаются: ${result.alreadyTracking}.`;
-  if (result.error) transfer.message += ` ${result.error.message} Остались выбраны непроверенные игры. Если ответ потерялся, часть могла добавиться: проверьте библиотеку и повторите выбор. Повтор сохраняет существующие настройки.`;
-  else transfer.message += ' Библиотека готова.';
-  try { await syncBootstrap(); }
-  catch { transfer.message += ' Не удалось обновить список на экране. Откройте библиотеку позже.'; }
-  transfer.busy = false;
-  if (state.route.page === 'library') renderAfterLibraryChange();
-  drawTransfer();
-  if (!result.error) toast(`В библиотеку добавлено игр: ${result.added}.`);
+    const result = await importLibraryBatches(games, payload => {
+      if (!current()) throw new Error('Профиль приложения изменился. Проверьте свою библиотеку перед повтором.');
+      return api.importLibrary(payload);
+    }, progress => {
+      if (!current()) return;
+      rememberImportedGames(progress);
+      const confirmed = new Set(progress.batch.map(game => game.app_id));
+      transfer.entries = transfer.entries.filter(game => !confirmed.has(game.app_id));
+      for (const appId of confirmed) transfer.selected.delete(appId);
+      transfer.message = `Обработано ${progress.completed} из ${games.length}. Добавлено: ${progress.added}. Уже отслеживаются: ${progress.alreadyTracking}.`;
+      drawTransfer();
+    });
+    if (!current()) return;
+    transfer.message = `Добавлено: ${result.added}. Уже отслеживаются: ${result.alreadyTracking}.`;
+    if (result.error) transfer.message += ` ${result.error.message} Остались выбраны непроверенные игры. Если ответ потерялся, часть могла добавиться: проверьте библиотеку и повторите выбор. Повтор сохраняет существующие настройки.`;
+    else transfer.message += ' Библиотека готова.';
+    try { await syncBootstrap(); }
+    catch { if (current()) transfer.message += ' Не удалось обновить список на экране. Откройте библиотеку позже.'; }
+    if (current() && !result.error) toast(`В библиотеку добавлено игр: ${result.added}.`);
+  } catch (error) {
+    if (current()) transfer.message = `${error.message || 'Не удалось завершить добавление.'} Подтверждённые игры сохранены. Проверьте библиотеку и повторите оставшийся выбор.`;
+  } finally {
+    if (current()) { transfer.busy = false; restoreLibraryImportUI(); }
+  }
 }
 
 async function exportTransfer() {
-  if (transfer.busy) return;
-  transfer.busy = true; transfer.message = 'Сохраняем библиотеку…'; drawTransfer();
+  if (transfer.busy || steam.busy) return;
+  const owner = authenticationEpoch;
+  const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
+  transfer.busy = true; transfer.message = 'Сохраняем библиотеку…';
   try {
-    transfer.exportText = serializeLibrary(await api.exportLibrary());
+    drawTransfer();
+    const exported = await api.exportLibrary();
+    if (!current()) return;
+    transfer.exportText = serializeLibrary(exported);
     transfer.open = true;
     const blob = new Blob([transfer.exportText], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -272,8 +334,8 @@ async function exportTransfer() {
       link.href = url; link.download = 'steam-radar-library.json'; document.body.append(link); link.click(); link.remove();
       transfer.message = 'Файл подготовлен. Если скачивание не появилось, скопируйте JSON ниже.';
     } finally { setTimeout(() => URL.revokeObjectURL(url), 60000); }
-  } catch (error) { transfer.message = error.message; transfer.open = true; }
-  finally { transfer.busy = false; drawTransfer(); }
+  } catch (error) { if (current()) { transfer.message = error.message; transfer.open = true; } }
+  finally { if (current()) { transfer.busy = false; restoreLibraryImportUI(); } }
 }
 
 async function copyTransfer() {
@@ -836,6 +898,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 async function start() {
+  authenticationEpoch++;
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
   searchController?.abort();
@@ -846,6 +909,8 @@ async function start() {
   // a previous owner's linked Steam account or selection while bootstrap loads.
   steam.status = null; steam.loginURL = ''; steam.loaded = false; steam.busy = ''; steam.message = ''; steam.error = '';
   steamSelection.clear();
+  transfer.readEpoch++;
+  Object.assign(transfer, { open: false, input: '', entries: [], selected: new Set(), busy: false, message: '', exportText: '' });
   state.bootstrap = null;
   appRoot.innerHTML = shell(state.route, state.bootstrap);
   setMain(loadingState('Подключаемся к приложению…'));

@@ -27,11 +27,11 @@ export function safeSteamLoginURL(value) {
 }
 
 export function createSteamSelection(limit = 100) {
-  const state = { games: [], selected: new Set(), query: '', shown: 60, existing: new Set(), slots: limit };
+  const state = { games: [], selected: new Set(), query: '', shown: 60, existing: new Set(), skipped: new Map(), slots: limit };
   function reconcile(library = []) {
     state.existing = new Set(library.map(game => Number(game.app_id)));
     state.slots = Math.max(0, limit - state.existing.size);
-    const available = new Set(state.games.filter(game => !state.existing.has(game.app_id)).map(game => game.app_id));
+    const available = new Set(state.games.filter(game => !state.existing.has(game.app_id) && !state.skipped.has(game.app_id)).map(game => game.app_id));
     state.selected = new Set([...state.selected].filter(id => available.has(id)).slice(0, state.slots));
   }
   function setGames(games, library = []) {
@@ -42,6 +42,7 @@ export function createSteamSelection(limit = 100) {
       if (!unique.has(game.app_id)) unique.set(game.app_id, { app_id: game.app_id, name: game.name.slice(0, 500) });
     }
     state.games = [...unique.values()];
+    state.skipped.clear();
     state.shown = 60;
     reconcile(library);
   }
@@ -51,19 +52,20 @@ export function createSteamSelection(limit = 100) {
   }
   function toggle(id, checked) {
     if (!checked) { state.selected.delete(id); return true; }
-    if (state.existing.has(id) || !state.games.some(game => game.app_id === id)) return false;
+    if (state.existing.has(id) || state.skipped.has(id) || !state.games.some(game => game.app_id === id)) return false;
     if (!state.selected.has(id) && state.selected.size >= state.slots) return false;
     state.selected.add(id); return true;
   }
   function selectFiltered() {
-    const candidates = filtered().filter(game => !state.existing.has(game.app_id));
+    const candidates = filtered().filter(game => !state.existing.has(game.app_id) && !state.skipped.has(game.app_id));
     for (const game of candidates) {
       if (state.selected.size >= state.slots) break;
       state.selected.add(game.app_id);
     }
   }
-  function clear() { state.games = []; state.selected.clear(); state.query = ''; state.shown = 60; state.existing = new Set(); state.slots = limit; }
-  return { state, reconcile, setGames, filtered, toggle, selectFiltered, clear,
+  function markSkipped(games) { for (const game of games) { state.skipped.set(game.app_id, game.message); state.selected.delete(game.app_id); } }
+  function clear() { state.games = []; state.selected.clear(); state.skipped.clear(); state.query = ''; state.shown = 60; state.existing = new Set(); state.slots = limit; }
+  return { state, reconcile, setGames, filtered, toggle, selectFiltered, markSkipped, clear,
     selectedGames: () => state.games.filter(game => state.selected.has(game.app_id)) };
 }
 

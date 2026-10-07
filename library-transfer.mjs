@@ -64,18 +64,30 @@ export async function importLibraryBatches(games, send, onBatch = () => {}) {
   let completed = 0;
   let added = 0;
   let alreadyTracking = 0;
+  const skipped = [];
   while (completed < games.length) {
     const batch = games.slice(completed, completed + 5);
     let result;
     try { result = await send(importPayload(batch)); }
-    catch (error) { return { added, alreadyTracking, completed, remaining: games.slice(completed), error }; }
-    if (!result || !Number.isInteger(result.added) || result.added < 0 || !Number.isInteger(result.already_tracking) || result.already_tracking < 0 || result.added + result.already_tracking !== batch.length) {
-      return { added, alreadyTracking, completed, remaining: games.slice(completed), error: new Error('Ответ сервера не подтверждает результат. Проверьте библиотеку перед повтором.') };
+    catch (error) { return { added, alreadyTracking, skipped, completed, remaining: games.slice(completed), error }; }
+    const omitted = result?.skipped ?? [];
+    const batchIds = new Set(batch.map(game => game.app_id));
+    const validSkipped = Array.isArray(omitted) && omitted.length <= batch.length
+      && new Set(omitted.map(game => game?.app_id)).size === omitted.length
+      && omitted.every(game => batchIds.has(game?.app_id) && typeof game.name === 'string' && game.name.length <= 500 && typeof game.message === 'string' && game.message.length <= 500);
+    if (!result || !validSkipped || !Number.isInteger(result.added) || result.added < 0 || !Number.isInteger(result.already_tracking) || result.already_tracking < 0 || result.added + result.already_tracking + omitted.length !== batch.length) {
+      return { added, alreadyTracking, skipped, completed, remaining: games.slice(completed), error: new Error('Ответ сервера не подтверждает результат. Проверьте библиотеку перед повтором.') };
     }
     completed += batch.length;
     added += result.added;
     alreadyTracking += result.already_tracking;
-    onBatch({ batch, result, completed, added, alreadyTracking });
+    skipped.push(...omitted);
+    try { onBatch({ batch, result, completed, added, alreadyTracking, skipped }); }
+    catch (error) {
+      // The server has confirmed this batch. A progress/render failure must
+      // not turn it back into an unconfirmed mutation or send the next batch.
+      return { added, alreadyTracking, skipped, completed, remaining: games.slice(completed), error };
+    }
   }
-  return { added, alreadyTracking, completed, remaining: [], error: null };
+  return { added, alreadyTracking, skipped, completed, remaining: [], error: null };
 }

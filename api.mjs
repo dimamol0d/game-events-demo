@@ -189,6 +189,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     linkSteam: () => request('/api/profile/steam/link', { method: 'POST', body: {} }),
     unlinkSteam: () => request('/api/profile/steam', { method: 'DELETE' }),
     steamLibrary: signal => request('/api/profile/steam/library', { signal }),
+    importSteamLibrary: payload => request('/api/profile/steam/import', { method: 'POST', body: payload }),
     // An external Steam browser has no Telegram initData. Pending state on the
     // server binds this assertion to the profile that initiated the login.
     steamCallback: async payload => {
