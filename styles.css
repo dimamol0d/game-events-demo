@@ -384,6 +384,53 @@ input[type=radio], input[type=checkbox] { accent-color: #416eaa; width: 18px; he
 .classification-explanation, .related-sources { margin: 18px 0; max-width: 78ch; color: var(--muted); font-size: .8rem; line-height: 1.6; }
 .classification-explanation summary, .related-sources summary { cursor: pointer; color: var(--ink); font-weight: 600; padding: 5px 0; }
 .classification-explanation p, .related-sources p { margin: 9px 0 0; }
+.library-tools-entry { display: flex; flex-wrap: wrap; gap: 10px; padding: 18px 0; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.library-tools-entry .button { white-space: normal; }
+.bulk-game-list { max-height: 340px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.bulk-form-controls { min-width: 0; padding: 0; margin: 0; border: 0; }
+.bulk-game-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px; cursor: pointer; }
+.bulk-game-row + .bulk-game-row { border-top: 1px solid var(--line); }
+.bulk-game-row > span { min-width: 0; flex: 1; }
+.bulk-game-row strong { display: block; font-size: .86rem; overflow-wrap: anywhere; }
+.bulk-game-row small { display: block; color: var(--muted); font-size: .72rem; margin-top: 5px; line-height: 1.5; }
+.bulk-game-row .text-link { font-size: .72rem; padding: 3px 0; }
+.bulk-field { padding: 18px 0; border-bottom: 1px solid var(--line); }
+.bulk-field-value { margin-top: 13px; padding-left: 29px; }
+.bulk-field-value select { width: 100%; max-width: 520px; min-height: 44px; padding: 9px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }
+.bulk-field-value p { margin: 9px 0 0; max-width: 72ch; }
+#bulk-custom-types { margin-top: 15px; }
+.bulk-confirmation { padding: 22px; background: var(--subtle-surface); border-radius: 8px; margin-bottom: 23px; }
+.bulk-confirmation h3 { font-size: 1rem; }
+.bulk-confirmation > p:last-child { margin-bottom: 0; }
+.bulk-changes { font-size: .8rem; }
+.bulk-changes summary { cursor: pointer; font-weight: 600; }
+.bulk-changes ul { padding-left: 20px; }
+.bulk-changes > ul > li + li { margin-top: 14px; }
+.bulk-changes strong, .bulk-changes span { display: block; overflow-wrap: anywhere; }
+.bulk-changes span { color: var(--muted); margin-top: 4px; }
+.tool-controls { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 13px; margin-bottom: 20px; }
+.tool-controls .schedule-field { width: 150px; }
+.preview-report { border-left: 3px solid var(--mint); padding: 6px 0 6px 17px; }
+.preview-report h3 { font-size: 1rem; }
+.preview-report h4 { font-size: .86rem; margin: 20px 0 12px; }
+.history-coverage { color: var(--muted); font-size: .79rem; line-height: 1.6; max-width: 75ch; }
+.preview-examples { list-style: none; padding: 0; margin: 0; }
+.preview-examples li { padding: 12px 0; border-top: 1px solid var(--line); }
+.preview-examples a { overflow-wrap: anywhere; }
+.preview-examples small, .preview-examples span { display: block; color: var(--muted); font-size: .72rem; margin-top: 5px; line-height: 1.5; }
+.recap-filters { border-bottom: 1px solid var(--line); padding-bottom: 23px; margin-bottom: 27px; }
+.recap-kind-options { display: grid; gap: 12px; margin: 15px 0 20px; }
+.recap-kind-options .check-row + .check-row { margin-top: 0; }
+.recap-summary { padding-bottom: 15px; }
+.recap-summary p { margin-bottom: 10px; }
+.recap-card { padding: 22px 0; border-top: 1px solid var(--line); }
+.recap-card h3 { margin-bottom: 13px; overflow-wrap: anywhere; }
+.recap-card h3 a:hover { text-decoration: underline; }
+.recap-points { padding-left: 20px; margin: 0 0 13px; }
+.recap-points li { font-size: .85rem; line-height: 1.6; overflow-wrap: anywhere; }
+.recap-points li + li { margin-top: 7px; }
+.recap-card .summary-basis { font-size: .72rem; }
+.recap-card .event-footer { margin-top: 18px; }
 .related-sources ul { padding-left: 20px; margin: 10px 0 0; }
 .related-sources li + li { margin-top: 7px; }
 .related-sources .source-link { overflow-wrap: anywhere; }
@@ -561,6 +608,14 @@ html[data-theme=dark] .button.danger { color: #f2bcb0; border-color: #996c61; }
   .coverage-bar { align-items: flex-start; }
   .coverage-bar .button .icon { display: none; }
   .library-list .game-art, .search-list .game-art { width: 64px; height: 48px; }
+  .library-list .game-row { flex-wrap: wrap; }
+  .library-list .game-row-main { flex-basis: 100%; }
+  .library-list .row-actions { margin-left: auto; }
+  .library-tools-entry .button { flex: 1 1 100%; }
+  .bulk-field-value { padding-left: 0; }
+  .bulk-confirmation { padding: 17px; }
+  .bulk-game-row { gap: 9px; padding: 12px; }
+  .bulk-game-row .text-link { font-size: .67rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }

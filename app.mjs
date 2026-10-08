@@ -1,10 +1,12 @@
 import { api, ApiError } from './api.mjs?v=20261008-latency1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, escapeHTML as h } from './model.mjs?v=20261008-latency1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261008-latency1';
 import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261008-latency1';
 import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261008-latency1';
 import { loadRuntimeConfig } from './config.mjs?v=20261008-latency1';
 import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261008-latency1';
 import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261008-latency1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261008-latency1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261008-latency1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -35,6 +37,99 @@ const feed = createFeedPager((filters, signal) => api.libraryFeed(filters, signa
   if (state.route.page === 'feed') renderFeed();
 });
 let feedLibraryKey = '';
+const bulk = createBulkSelection();
+const filterPreview = createToolRead((payload, signal) => api.previewPreferences(payload, signal), drawFilterPreview);
+const recap = createRecapPager((filters, signal) => api.recap(filters, signal), drawRecapResults);
+
+function drawFilterPreview() {
+  const region = document.querySelector('#filter-preview-result');
+  if (!region || !['bulk', 'settings'].includes(state.route.page)) return;
+  region.innerHTML = previewResult(filterPreview.state);
+  region.setAttribute('aria-busy', String(filterPreview.state.loading));
+  const button = document.querySelector('[data-action="filter-preview"]');
+  if (button) button.disabled = filterPreview.state.loading || bulk.state.busy || state.route.page === 'bulk' && !bulk.state.selected.size;
+}
+function invalidatePreview() { filterPreview.cancel({ clear: true }); drawFilterPreview(); }
+function drawRecapResults() {
+  if (state.route.page !== 'recap') return;
+  const region = document.querySelector('#recap-results');
+  if (region) { region.innerHTML = recapResults(recap.state); region.setAttribute('aria-busy', String(recap.state.loading)); }
+}
+function readBulkPatch(form) {
+  const patch = {};
+  for (const name of ['enabled', 'mode', 'include_unknown', 'timing', 'translation_mode']) {
+    if (!form.elements['apply_' + name].checked) continue;
+    patch[name] = ['enabled', 'include_unknown'].includes(name) ? form.elements[name].value === 'true' : form.elements[name].value;
+  }
+  if (patch.mode === 'custom') for (const name of ['patches', 'news', 'builds']) patch[name] = form.elements[name].checked;
+  return patch;
+}
+function drawBulkChanges({ rows = false } = {}) {
+  if (state.route.page !== 'bulk') return;
+  const form = document.querySelector('#bulk-preferences-form');
+  if (!form) return;
+  if (rows) document.querySelector('#bulk-game-list').innerHTML = bulkRows(bulk);
+  document.querySelector('#bulk-selection-count').textContent = `Выбрано: ${bulk.state.selected.size} / 100`;
+  document.querySelector('#bulk-confirmation').innerHTML = bulkConfirmation(bulk);
+  form.querySelector('[type="submit"]').disabled = bulk.state.busy || !bulk.state.selected.size || !Object.keys(bulk.state.patch).length;
+  form.querySelector('#bulk-message').textContent = bulk.state.error || bulk.state.message;
+}
+function syncBulkFields(form) {
+  for (const name of ['enabled', 'mode', 'include_unknown', 'timing', 'translation_mode']) form.querySelector(`[data-bulk-field="${name}"]`).hidden = !form.elements['apply_' + name].checked;
+  form.querySelector('#bulk-custom-types').hidden = form.elements.mode.value !== 'custom';
+  form.querySelector('#bulk-mode-explanation').textContent = MODES.find(mode => mode.id === form.elements.mode.value)?.text || '';
+  form.querySelector('#bulk-translation-explanation').textContent = TRANSLATION_MODES.find(mode => mode.id === form.elements.translation_mode.value)?.text || '';
+  form.querySelector('#bulk-noise-warning').hidden = !(bulk.state.patch.mode === 'all' || bulk.state.patch.mode === 'custom' && bulk.state.patch.builds || bulk.state.patch.translation_mode === 'required');
+}
+async function runFilterPreview() {
+  if (!state.bootstrap || !['bulk', 'settings'].includes(state.route.page) || bulk.state.busy) return;
+  const days = Number(document.querySelector('#preview-days')?.value || 7);
+  let payload;
+  if (state.route.page === 'bulk') { bulk.reconcile(state.bootstrap.library); if (!bulk.state.selected.size) return; payload = bulk.payload(); }
+  else {
+    const form = document.querySelector('#preferences-form');
+    if (!form || Number(form.dataset.appId) !== state.route.appId) return;
+    payload = { app_ids: [state.route.appId], patch: readPreferences(form) };
+  }
+  await filterPreview.load({ ...payload, days });
+}
+async function saveBulkPreferences(form) {
+  if (state.route.page !== 'bulk' || !state.bootstrap || bulk.state.busy) return;
+  bulk.reconcile(state.bootstrap.library); bulk.state.patch = readBulkPatch(form);
+  const payload = bulk.payload();
+  if (!payload.app_ids.length || !Object.keys(payload.patch).length) return;
+  const owner = authenticationEpoch;
+  const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
+  bulk.state.busy = true; bulk.state.error = ''; bulk.state.message = 'Сохраняем настройки выбранных игр…';
+  invalidatePreview(); drawBulkChanges();
+  const controls = Array.from(form.querySelectorAll('input,select,button'));
+  const disabled = controls.map(control => control.disabled);
+  controls.forEach(control => { control.disabled = true; });
+  try {
+    const result = await api.bulkPreferences(payload);
+    if (!current()) return;
+    const selected = new Set(payload.app_ids);
+    const games = new Map((result.games || []).filter(game => selected.has(Number(game.app_id))).map(game => [Number(game.app_id), game]));
+    if (games.size !== selected.size) throw new Error('Сервер вернул неполный результат. Проверьте библиотеку; повтор сохраняет тот же выбор без дубликатов.');
+    state.bootstrap.library = state.bootstrap.library.map(game => games.has(Number(game.app_id)) ? { ...game, preferences: games.get(Number(game.app_id)).preferences } : game);
+    if (state.game && games.has(Number(state.game.game.app_id))) state.game.game.preferences = games.get(Number(state.game.game.app_id)).preferences;
+    bulk.reconcile(state.bootstrap.library);
+    bulk.state.message = `Сохранено. Изменено игр: ${result.updated}. Уже настроены так: ${result.unchanged}.`;
+    toast(bulk.state.message);
+  } catch (error) { if (current()) bulk.state.error = `Не удалось подтвердить сохранение. ${error.message} При потере ответа настройки могли сохраниться; повтор применит этот же выбор.`; }
+  finally {
+    if (current()) {
+      bulk.state.busy = false;
+      if (form.isConnected) controls.forEach((control, index) => { control.disabled = disabled[index]; });
+      if (state.route.page === 'bulk') {
+        // Navigation can replace the original form while this write is in
+        // flight. Rebuild that form from the confirmed owner state on return.
+        if (!form.isConnected) { setMain(bulkPage(bulk)); syncBulkFields(document.querySelector('#bulk-preferences-form')); }
+        drawBulkChanges({ rows: true }); drawFilterPreview();
+      }
+    }
+  }
+}
 
 function renderFeed({ focus = false } = {}) {
   if (state.route.page !== 'feed') return;
@@ -356,13 +451,13 @@ function updateUnread(count) {
   document.querySelectorAll('[data-unread]').forEach(badge => { badge.textContent = String(count || ''); badge.hidden = !count; });
 }
 function updateNavigation() {
-  const active = ['game', 'settings', 'feed'].includes(state.route.page) ? 'library' : state.route.page;
+  const active = ['game', 'settings', 'feed', 'bulk', 'recap'].includes(state.route.page) ? 'library' : state.route.page;
   document.querySelectorAll('.nav-item').forEach(link => {
     const current = link.hash === '#' + active;
     link.classList.toggle('active', current);
     if (current) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
   });
-  telegram.updateBack(['game', 'settings', 'feed', 'profile'].includes(state.route.page) ? () => { location.hash = state.route.page === 'settings' ? `#game/${state.route.appId}` : '#library'; } : null);
+  telegram.updateBack(['game', 'settings', 'feed', 'profile', 'bulk', 'recap'].includes(state.route.page) ? () => { location.hash = state.route.page === 'settings' ? `#game/${state.route.appId}` : '#library'; } : null);
 }
 
 async function syncBootstrap() {
@@ -479,13 +574,15 @@ async function loadRoute({ focus = true, force = false } = {}) {
   clearTimeout(searchTimer);
   searchController?.abort();
   feed.cancel();
+  filterPreview.cancel({ clear: true });
+  recap.cancel();
   cancelSteamReads();
   const previous = state.route;
   state.route = parseRoute(location.hash);
   const route = state.route;
   const epoch = ++navigationEpoch;
   updateNavigation();
-  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления', profile: 'Мой профиль' }[route.page] || 'Главная') + ' — Игровой радар';
+  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления', profile: 'Мой профиль', bulk: 'Массовые настройки', recap: 'Пока вы не играли' }[route.page] || 'Главная') + ' — Игровой радар';
   if (previous.page !== route.page || previous.appId !== route.appId) window.scrollTo({ top: 0, behavior: 'instant' });
   if (route.page === 'home') {
     setMain(homePage(state.bootstrap, state.config), focus);
@@ -526,6 +623,22 @@ async function loadRoute({ focus = true, force = false } = {}) {
     feedLibraryKey = libraryKey;
     renderFeed({ focus });
     if (state.bootstrap.library.length && (force || !feed.state.loaded)) await feed.load();
+    return;
+  }
+  if (route.page === 'bulk') {
+    bulk.reconcile(state.bootstrap.library);
+    if (!state.bootstrap.library.length) { location.hash = '#library'; return; }
+    setMain(bulkPage(bulk), focus);
+    syncBulkFields(document.querySelector('#bulk-preferences-form'));
+    drawFilterPreview();
+    return;
+  }
+  if (route.page === 'recap') {
+    const library = state.bootstrap.library;
+    const appId = library.some(game => Number(game.app_id) === Number(route.appId)) ? route.appId : library.some(game => Number(game.app_id) === recap.state.filters.app_id) ? recap.state.filters.app_id : Number(library[0]?.app_id || 0);
+    recap.setFilters({ ...recap.state.filters, app_id: appId }, { force });
+    setMain(recapPage(recap.state, library), focus);
+    if (appId && (force || !recap.state.result)) await recap.load();
     return;
   }
   if (route.page === 'game' && state.game?.game.app_id === route.appId && !force) {
@@ -595,6 +708,8 @@ function renderAfterLibraryChange() {
   } else if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
   else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
   else if (state.route.page === 'game') renderGame();
+  else if (state.route.page === 'bulk') { bulk.reconcile(state.bootstrap.library); setMain(bulkPage(bulk)); drawFilterPreview(); }
+  else if (state.route.page === 'recap') { recap.cancel(); recap.setFilters({ ...recap.state.filters, app_id: state.bootstrap.library[0]?.app_id }, { force: true }); setMain(recapPage(recap.state, state.bootstrap.library)); }
 }
 
 async function mutateButton(button, key, task) {
@@ -614,6 +729,16 @@ document.addEventListener('click', async event => {
   const action = button.dataset.action;
   const appId = Number(button.dataset.appId);
   if (action === 'steam-callback-retry') { await verifySteamCallback(); return; }
+  if (action === 'filter-preview') { await runFilterPreview(); return; }
+  if (action === 'bulk-select' || action === 'bulk-clear') {
+    if (state.route.page !== 'bulk' || bulk.state.busy) return;
+    if (action === 'bulk-select') bulk.selectFiltered(); else bulk.state.selected.clear();
+    bulk.state.error = ''; bulk.state.message = ''; invalidatePreview(); drawBulkChanges({ rows: true }); return;
+  }
+  if (action === 'recap-more' || action === 'recap-retry') {
+    if (state.route.page !== 'recap') return;
+    await recap.load({ more: action === 'recap-more' || recap.state.errorIsMore }); return;
+  }
   if (action.startsWith('steam-')) {
     if (!state.bootstrap || !['library', 'profile'].includes(state.route.page)) return;
     if (action === 'steam-open') { steam.open = true; steam.pollCount = 0; drawSteam(); await refreshSteam(); }
@@ -745,6 +870,7 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  if (event.target.id === 'bulk-game-search' && state.route.page === 'bulk' && !bulk.state.busy) { bulk.state.query = event.target.value; drawBulkChanges({ rows: true }); return; }
   if (event.target.id === 'steam-game-search' && !steam.busy) {
     steamSelection.state.query = event.target.value; steamSelection.state.shown = 60; drawSteam({ rowsOnly: true }); return;
   }
@@ -772,6 +898,28 @@ function syncPreferenceNotes(form) {
 }
 
 document.addEventListener('change', async event => {
+  if (event.target.dataset.bulkId) {
+    if (state.route.page !== 'bulk' || bulk.state.busy) return;
+    if (!bulk.toggle(Number(event.target.dataset.bulkId), event.target.checked)) toast('Можно выбрать до 100 игр. Снимите выбор с другой игры.');
+    bulk.state.error = ''; bulk.state.message = ''; invalidatePreview(); drawBulkChanges({ rows: true }); return;
+  }
+  const bulkForm = event.target.closest('#bulk-preferences-form');
+  if (bulkForm) {
+    if (state.route.page !== 'bulk' || bulk.state.busy) return;
+    if (event.target.id !== 'preview-days') {
+      if (event.target.name === 'mode') { const prefs = preferencesForMode(event.target.value, { patches: bulkForm.elements.patches.checked, news: bulkForm.elements.news.checked, builds: bulkForm.elements.builds.checked }); for (const name of ['patches', 'news', 'builds']) bulkForm.elements[name].checked = prefs[name]; }
+      bulk.state.patch = readBulkPatch(bulkForm); bulk.state.error = ''; bulk.state.message = '';
+      syncBulkFields(bulkForm); drawBulkChanges();
+    }
+    invalidatePreview(); return;
+  }
+  const recapForm = event.target.closest('#recap-filters');
+  if (recapForm) {
+    if (state.route.page !== 'recap') return;
+    recapForm.querySelector('.recap-since').hidden = recapForm.elements.period.value !== 'custom';
+    const changed = recap.setFilters({ app_id: recapForm.elements.app_id.value, period: recapForm.elements.period.value, days: recapForm.elements.period.value, since: recapForm.elements.since.value, news: recapForm.elements.news.checked, builds: recapForm.elements.builds.checked });
+    if (changed) drawRecapResults(); return;
+  }
   if (event.target.dataset.steamId) {
     if (steam.busy) return;
     const accepted = steamSelection.toggle(Number(event.target.dataset.steamId), event.target.checked);
@@ -818,6 +966,8 @@ document.addEventListener('change', async event => {
   }
   const form = event.target.closest('#preferences-form');
   if (!form) return;
+  invalidatePreview();
+  if (event.target.id === 'preview-days') return;
   form.querySelector('#preferences-message').textContent = 'Есть несохранённые изменения.';
   if (event.target.name === 'mode') {
     const prefs = preferencesForMode(event.target.value, readPreferences(form));
@@ -831,6 +981,14 @@ function readPreferences(form) {
 }
 
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'bulk-preferences-form') { event.preventDefault(); await saveBulkPreferences(event.target); return; }
+  if (event.target.id === 'recap-filters') {
+    event.preventDefault();
+    if (state.route.page !== 'recap') return;
+    const form = event.target;
+    recap.setFilters({ app_id: form.elements.app_id.value, period: form.elements.period.value, days: form.elements.period.value, since: form.elements.since.value, news: form.elements.news.checked, builds: form.elements.builds.checked });
+    await recap.load(); return;
+  }
   if (event.target.id === 'feed-filters') { event.preventDefault(); return; }
   if (event.target.id === 'library-transfer-form') { event.preventDefault(); transfer.input = event.target.querySelector('#library-transfer-input').value; previewTransfer(); return; }
   if (event.target.id === 'search-form') { event.preventDefault(); await runSearch(); }
@@ -864,10 +1022,12 @@ document.addEventListener('submit', async event => {
   const appId = Number(form.dataset.appId);
   const message = form.querySelector('#preferences-message');
   const prefs = readPreferences(form);
+  const owner = authenticationEpoch;
   await mutateButton(button, 'prefs-' + appId, async () => {
     message.textContent = 'Сохраняем…';
     try {
       const result = await api.savePreferences(appId, prefs);
+      if (owner !== authenticationEpoch || !state.bootstrap) return;
       state.bootstrap.library = state.bootstrap.library.map(game => game.app_id === appId ? { ...game, preferences: result.preferences } : game);
       if (state.game?.game.app_id === appId) state.game.game.preferences = result.preferences;
       message.textContent = 'Настройки сохранены.';
@@ -879,7 +1039,7 @@ document.addEventListener('submit', async event => {
 window.addEventListener('hashchange', () => {
   if (state.bootstrap) loadRoute();
 });
-window.addEventListener('pagehide', () => { feed.cancel(); cancelSteamReads(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pagehide', () => { feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelSteamReads(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   telegram.init();
@@ -904,6 +1064,10 @@ async function start() {
   clearTimeout(overviewPollTimer);
   searchController?.abort();
   feed.cancel();
+  filterPreview.cancel({ clear: true });
+  recap.cancel();
+  recap.setFilters({}, { force: true });
+  bulk.clear();
   cancelSteamReads();
   if (steamCallback) { await verifySteamCallback(); return; }
   // A fresh Telegram authentication may identify another profile. Do not show
