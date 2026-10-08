@@ -1,12 +1,12 @@
-import { api, ApiError } from './api.mjs?v=20261008-latency1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261008-latency1';
-import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261008-latency1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261008-latency1';
-import { loadRuntimeConfig } from './config.mjs?v=20261008-latency1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261008-latency1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261008-latency1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261008-latency1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261008-latency1';
+import { api, ApiError } from './api.mjs?v=20261009-library3';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261009-library3';
+import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261009-library3';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261009-library3';
+import { loadRuntimeConfig } from './config.mjs?v=20261009-library3';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261009-library3';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261009-library3';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261009-library3';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261009-library3';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -26,6 +26,12 @@ let gamePollTimer;
 let overviewPollTimer;
 let bootstrapUpdatedAt = 0;
 const mutations = new Set();
+// A delayed bulk response must never overwrite a later individual save (or
+// the reverse). Locks belong to the authenticated owner and each selected game,
+// so a different game's settings can still be saved during a slow request.
+const preferenceWrites = new Map();
+const PREFERENCE_WAIT_MESSAGE = 'Настройки этой игры уже сохраняются. Дождитесь завершения, затем сохраните свой выбор.';
+const BULK_WAIT_MESSAGE = 'Настройки части выбранных игр уже сохраняются. Дождитесь завершения, затем примените свой выбор.';
 const translationRequested = new Set();
 const transfer = { open: false, input: '', entries: [], selected: new Set(), busy: false, message: '', exportText: '', readEpoch: 0 };
 const steam = { open: false, status: null, loginURL: '', loaded: false, busy: '', message: '', error: '', pollCount: 0 };
@@ -40,6 +46,32 @@ let feedLibraryKey = '';
 const bulk = createBulkSelection();
 const filterPreview = createToolRead((payload, signal) => api.previewPreferences(payload, signal), drawFilterPreview);
 const recap = createRecapPager((filters, signal) => api.recap(filters, signal), drawRecapResults);
+
+function hasPreferenceWrite(appId) { return preferenceWrites.get(Number(appId))?.owner === authenticationEpoch; }
+function reservePreferenceWrites(appIds) {
+  const ids = [...new Set(appIds.map(Number))];
+  if (ids.some(hasPreferenceWrite)) return null;
+  const reservation = { owner: authenticationEpoch, ids };
+  for (const appId of ids) preferenceWrites.set(appId, reservation);
+  return reservation;
+}
+function releasePreferenceWrites(reservation) {
+  for (const appId of reservation.ids) if (preferenceWrites.get(appId) === reservation) preferenceWrites.delete(appId);
+  if (reservation.owner === authenticationEpoch) syncPreferenceWriteUI();
+}
+function syncPreferenceWriteUI() {
+  if (state.route.page === 'bulk') { drawBulkChanges(); return; }
+  if (state.route.page !== 'settings') return;
+  const form = document.querySelector('#preferences-form');
+  const appId = Number(form?.dataset?.appId);
+  if (!appId || appId !== state.route.appId) return;
+  const pending = hasPreferenceWrite(appId);
+  const button = form.querySelector('[type="submit"]');
+  if (button) button.disabled = pending;
+  const message = form.querySelector('#preferences-message');
+  if (pending) message.textContent = PREFERENCE_WAIT_MESSAGE;
+  else if (message.textContent === PREFERENCE_WAIT_MESSAGE) message.textContent = 'Предыдущее сохранение завершено. Проверьте настройки и сохраните свой выбор.';
+}
 
 function drawFilterPreview() {
   const region = document.querySelector('#filter-preview-result');
@@ -71,8 +103,9 @@ function drawBulkChanges({ rows = false } = {}) {
   if (rows) document.querySelector('#bulk-game-list').innerHTML = bulkRows(bulk);
   document.querySelector('#bulk-selection-count').textContent = `Выбрано: ${bulk.state.selected.size} / 100`;
   document.querySelector('#bulk-confirmation').innerHTML = bulkConfirmation(bulk);
-  form.querySelector('[type="submit"]').disabled = bulk.state.busy || !bulk.state.selected.size || !Object.keys(bulk.state.patch).length;
-  form.querySelector('#bulk-message').textContent = bulk.state.error || bulk.state.message;
+  const pending = [...bulk.state.selected].some(hasPreferenceWrite);
+  form.querySelector('[type="submit"]').disabled = bulk.state.busy || pending || !bulk.state.selected.size || !Object.keys(bulk.state.patch).length;
+  form.querySelector('#bulk-message').textContent = !bulk.state.busy && pending ? BULK_WAIT_MESSAGE : bulk.state.error || bulk.state.message;
 }
 function syncBulkFields(form) {
   for (const name of ['enabled', 'mode', 'include_unknown', 'timing', 'translation_mode']) form.querySelector(`[data-bulk-field="${name}"]`).hidden = !form.elements['apply_' + name].checked;
@@ -98,6 +131,8 @@ async function saveBulkPreferences(form) {
   bulk.reconcile(state.bootstrap.library); bulk.state.patch = readBulkPatch(form);
   const payload = bulk.payload();
   if (!payload.app_ids.length || !Object.keys(payload.patch).length) return;
+  const reservation = reservePreferenceWrites(payload.app_ids);
+  if (!reservation) { drawBulkChanges(); return; }
   const owner = authenticationEpoch;
   const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
   bulk.state.busy = true; bulk.state.error = ''; bulk.state.message = 'Сохраняем настройки выбранных игр…';
@@ -118,6 +153,7 @@ async function saveBulkPreferences(form) {
     toast(bulk.state.message);
   } catch (error) { if (current()) bulk.state.error = `Не удалось подтвердить сохранение. ${error.message} При потере ответа настройки могли сохраниться; повтор применит этот же выбор.`; }
   finally {
+    releasePreferenceWrites(reservation);
     if (current()) {
       bulk.state.busy = false;
       if (form.isConnected) controls.forEach((control, index) => { control.disabled = disabled[index]; });
@@ -630,6 +666,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
     if (!state.bootstrap.library.length) { location.hash = '#library'; return; }
     setMain(bulkPage(bulk), focus);
     syncBulkFields(document.querySelector('#bulk-preferences-form'));
+    drawBulkChanges();
     drawFilterPreview();
     return;
   }
@@ -668,6 +705,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
           return;
         }
         setMain(settingsPage(result.game));
+        syncPreferenceWriteUI();
       } else { renderGame({ focus: false }); scheduleGamePoll(epoch); }
     }
   } catch (error) { if (epoch === navigationEpoch) setMain(errorState(error.message)); }
@@ -1023,17 +1061,22 @@ document.addEventListener('submit', async event => {
   const message = form.querySelector('#preferences-message');
   const prefs = readPreferences(form);
   const owner = authenticationEpoch;
-  await mutateButton(button, 'prefs-' + appId, async () => {
-    message.textContent = 'Сохраняем…';
-    try {
-      const result = await api.savePreferences(appId, prefs);
-      if (owner !== authenticationEpoch || !state.bootstrap) return;
-      state.bootstrap.library = state.bootstrap.library.map(game => game.app_id === appId ? { ...game, preferences: result.preferences } : game);
-      if (state.game?.game.app_id === appId) state.game.game.preferences = result.preferences;
-      message.textContent = 'Настройки сохранены.';
-      toast('Настройки сохранены. Новые события будут проходить эти правила.');
-    } catch (error) { message.textContent = 'Не сохранено. ' + error.message; throw error; }
-  });
+  const reservation = reservePreferenceWrites([appId]);
+  if (!reservation) { message.textContent = PREFERENCE_WAIT_MESSAGE; button.disabled = true; return; }
+  try {
+    await mutateButton(button, `prefs-${owner}-${appId}`, async () => {
+      message.textContent = 'Сохраняем…';
+      try {
+        const result = await api.savePreferences(appId, prefs);
+        if (owner !== authenticationEpoch || !state.bootstrap) return;
+        state.bootstrap.library = state.bootstrap.library.map(game => game.app_id === appId ? { ...game, preferences: result.preferences } : game);
+        if (state.game?.game.app_id === appId) state.game.game.preferences = result.preferences;
+        bulk.reconcile(state.bootstrap.library);
+        message.textContent = 'Настройки сохранены.';
+        toast('Настройки сохранены. Новые события будут проходить эти правила.');
+      } catch (error) { if (owner === authenticationEpoch) { message.textContent = 'Не сохранено. ' + error.message; throw error; } }
+    });
+  } finally { releasePreferenceWrites(reservation); }
 });
 
 window.addEventListener('hashchange', () => {
@@ -1060,6 +1103,7 @@ document.addEventListener('visibilitychange', () => {
 
 async function start() {
   authenticationEpoch++;
+  preferenceWrites.clear();
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
   searchController?.abort();
