@@ -1,4 +1,9 @@
-export const DEFAULT_PREFS = Object.freeze({ enabled: true, mode: 'updates', patches: true, builds: false, news: false, include_unknown: true, timing: 'fast' });
+export const DEFAULT_PREFS = Object.freeze({ enabled: true, mode: 'updates', patches: true, builds: false, news: false, include_unknown: true, timing: 'fast', translation_mode: 'auto' });
+export const TRANSLATION_MODES = Object.freeze([
+  { id: 'auto', name: 'Сразу, перевод добавится позже', text: 'Присылаем доступный текст без ожидания перевода. Когда краткий русский перевод готов, обновляем то же сообщение без нового уведомления.' },
+  { id: 'original', name: 'Всегда оригинал', text: 'Присылаем исходный текст разработчика на его языке. Автоматический перевод не подменяет текст сообщения.' },
+  { id: 'required', name: 'Только с русским переводом', text: 'Публикации на другом языке ждут готового краткого перевода. Текст разработчика на русском и технические сообщения о сборке переводить не нужно.' },
+]);
 export const MODES = Object.freeze([
   { id: 'major', name: 'Только важное', text: 'Новый контент и крупные изменения, явно описанные разработчиком. Обновления с неизвестной важностью — по переключателю ниже.' },
   { id: 'updates', name: 'Все обновления', text: 'Изменения самой игры: новый контент, баланс и исправления. Анонсы и технические сигналы без описания остаются в истории.' },

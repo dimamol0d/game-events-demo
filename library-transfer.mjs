@@ -7,9 +7,9 @@ const ownKeys = (value, allowed) => value && typeof value === 'object' && !Array
 const validId = value => Number.isSafeInteger(value) && value > 0 && value <= 4294967295;
 
 function preferences(value) {
-  if (!ownKeys(value, [...booleanPreferences, 'mode', 'timing'])) throw new Error('В файле есть неизвестные настройки игры.');
+  if (!ownKeys(value, [...booleanPreferences, 'mode', 'timing', 'translation_mode'])) throw new Error('В файле есть неизвестные настройки игры.');
   for (const [key, setting] of Object.entries(value)) {
-    if (booleanPreferences.has(key) ? typeof setting !== 'boolean' : key === 'mode' ? !modes.has(setting) : !['fast', 'described'].includes(setting)) throw new Error('В файле есть некорректные настройки игры.');
+    if (booleanPreferences.has(key) ? typeof setting !== 'boolean' : key === 'mode' ? !modes.has(setting) : key === 'translation_mode' ? !['auto', 'original', 'required'].includes(setting) : !['fast', 'described'].includes(setting)) throw new Error('В файле есть некорректные настройки игры.');
   }
   return { ...value };
 }

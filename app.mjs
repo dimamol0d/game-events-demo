@@ -768,6 +768,7 @@ function syncPreferenceNotes(form) {
   const builds = mode === 'all' || (mode === 'custom' && form.elements.builds.checked);
   form.querySelector('#noise-warning').hidden = !builds;
   form.querySelector('#build-timing-note').hidden = !builds || form.elements.timing.value !== 'described';
+  form.querySelector('#translation-required-note').hidden = form.elements.translation_mode.value !== 'required';
 }
 
 document.addEventListener('change', async event => {
@@ -826,7 +827,7 @@ document.addEventListener('change', async event => {
 });
 
 function readPreferences(form) {
-  return { enabled: form.elements.enabled.checked, mode: form.elements.mode.value, patches: form.elements.patches.checked, builds: form.elements.builds.checked, news: form.elements.news.checked, include_unknown: form.elements.include_unknown.checked, timing: form.elements.timing.value };
+  return { enabled: form.elements.enabled.checked, mode: form.elements.mode.value, patches: form.elements.patches.checked, builds: form.elements.builds.checked, news: form.elements.news.checked, include_unknown: form.elements.include_unknown.checked, timing: form.elements.timing.value, translation_mode: form.elements.translation_mode?.value || 'auto' };
 }
 
 document.addEventListener('submit', async event => {
