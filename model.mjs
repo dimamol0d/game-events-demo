@@ -143,7 +143,7 @@ export function eventUnderstanding(event, preferred = 'ru') {
   const language = publicationLanguage(event, preferred);
   const original = event.understanding || {};
   const localized = language.russian && event.understanding_ru ? event.understanding_ru : original;
-  const useShort = preferred !== 'original' && event.short_translation_status === 'ready' && Array.isArray(event.summary_points_ru) && event.summary_points_ru.length > 0;
+  const useShort = language.shortRussian && Array.isArray(event.summary_points_ru);
   const summary = (useShort ? event.summary_points_ru : Array.isArray(localized.summary_points) ? localized.summary_points : []).filter(point => typeof point === 'string' && point.trim()).slice(0, 4);
   const importanceLevel = original.importance || ({ major: 'important', minor: 'routine' })[original.severity] || 'unknown';
   const importance = ({ important: 'Важное обновление', routine: 'Небольшие изменения' })[importanceLevel] || 'Важность пока неизвестна';
