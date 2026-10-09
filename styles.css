@@ -617,6 +617,46 @@ html[data-theme=dark] .button.danger { color: #f2bcb0; border-color: #996c61; }
   .bulk-game-row { gap: 9px; padding: 12px; }
   .bulk-game-row .text-link { font-size: .67rem; }
 }
+.library-collections { margin-top: 27px; margin-bottom: 22px; }
+.library-collections .section-heading { gap: 12px; flex-wrap: wrap; }
+.library-collections .section-heading h2 { font-size: 1.1rem; }
+.collection-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0; }
+.collection-chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 40px; padding: 8px 13px; background: var(--surface); color: var(--muted); border: 1px solid var(--line); border-radius: 20px; font: inherit; text-align: left; cursor: pointer; }
+.collection-chip span { min-width: 0; overflow-wrap: anywhere; }
+.collection-chip small { flex-shrink: 0; font-size: .75rem; }
+.collection-chip.active { color: var(--ink); border-color: var(--blue); background: var(--subtle-surface); }
+.collection-search { max-width: 420px; margin-bottom: 12px; }
+#collection-library-action { display: flex; align-items: center; flex-wrap: wrap; gap: 15px; }
+.collection-name-form { display: flex; align-items: end; gap: 12px; margin: 20px 0; }
+.collection-name-form .schedule-field { flex: 1; max-width: 450px; min-width: 0; }
+.collection-name-form .button { flex-shrink: 0; }
+.collection-list { margin: 20px 0; border-top: 1px solid var(--line); }
+.collection-list-row { display: flex; align-items: center; gap: 17px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+.collection-list-row strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.collection-list-row > span { flex-shrink: 0; font-size: .8rem; color: var(--muted); }
+.collection-list-row .text-link { color: #315b93; }
+.collection-empty { padding: 25px 0; }
+.collection-management { margin: 15px 0 30px; }
+.collection-management > summary { cursor: pointer; color: #315b93; padding: 13px 0; }
+.collection-management .notice { margin-top: 16px; }
+.collection-management .notice .button { margin: 5px 8px 5px 0; }
+.collection-game-choices { border: 0; padding: 0; margin: 20px 0; }
+.collection-game-choices .check-row { border-bottom: 1px solid var(--line); padding: 14px 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .collection-name-form { align-items: stretch; flex-direction: column; }
+  .collection-name-form .schedule-field { max-width: none; }
+  .collection-name-form .button { align-self: flex-start; }
+  .collection-chip { font-size: .82rem; padding: 8px 11px; }
+  .collection-list-row { gap: 10px; padding: 17px 0; }
+  .collection-list-row > span { font-size: .72rem; }
+  .collection-list-row strong { font-size: .92rem; }
+  .collection-management summary { font-size: .9rem; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+.classification-evidence { padding-left: 1.15rem; }
+.classification-evidence li + li { margin-top: 1rem; }
+.classification-evidence p { margin: .4rem 0; }
+.classification-evidence blockquote { margin: .4rem 0; padding-left: .75rem; border-left: 3px solid var(--mint); overflow-wrap: anywhere; color: var(--muted); }

@@ -37,11 +37,15 @@ export function safeImageURL(value) {
 
 export function parseRoute(hash = '') {
   const [path, query = ''] = hash.replace(/^#/, '').split('?');
-  const match = /^(game|settings|recap)\/(\d+)$/.exec(path);
+  const match = /^(game|settings|recap|game-lists|collection)\/(\d+)$/.exec(path);
   if (match && Number(match[2]) > 0 && Number.isSafeInteger(Number(match[2]))) {
+    if (match[1] === 'collection') return { page: 'collection', collectionId: Number(match[2]) };
     return { page: match[1], appId: Number(match[2]), eventId: new URLSearchParams(query).get('event') };
   }
-  return { page: ['home', 'search', 'library', 'inbox', 'feed', 'profile', 'bulk', 'recap'].includes(path) ? path : 'home' };
+  const route = { page: ['home', 'search', 'library', 'inbox', 'feed', 'profile', 'bulk', 'recap', 'collections'].includes(path) ? path : 'home' };
+  const list = Number(new URLSearchParams(query).get('collection'));
+  if (route.page === 'bulk' && Number.isSafeInteger(list) && list > 0) route.collectionId = list;
+  return route;
 }
 
 export function normalizeFeedFilters(value = {}) {
@@ -139,6 +143,23 @@ export function preferencesForMode(mode, previous = DEFAULT_PREFS) {
   return prefs;
 }
 
+export function classificationEvidence(metadata = {}) {
+  if (metadata.category !== 'update' || !Array.isArray(metadata.change_type_evidence)) return [];
+  const allowed = new Set(['content', 'balance', 'fixes', 'performance', 'technical']);
+  const confirmed = new Set(Array.isArray(metadata.change_types) ? metadata.change_types : []);
+  const seen = new Set();
+  const result = [];
+  for (const item of metadata.change_type_evidence.slice(0, 20)) {
+    if (!item || !allowed.has(item.type) || !confirmed.has(item.type) || seen.has(item.type) ||
+        typeof item.reason_ru !== 'string' || typeof item.excerpt !== 'string' ||
+        !item.reason_ru.trim() || !item.excerpt.trim()) continue;
+    seen.add(item.type);
+    result.push({ type: item.type, reason_ru: item.reason_ru.trim().slice(0, 240), excerpt: item.excerpt.trim().slice(0, 240) });
+    if (result.length === 5) break;
+  }
+  return result;
+}
+
 export function eventUnderstanding(event, preferred = 'ru') {
   const language = publicationLanguage(event, preferred);
   const original = event.understanding || {};
@@ -153,7 +174,8 @@ export function eventUnderstanding(event, preferred = 'ru') {
     category_reason_ru: original.category_reason_ru || '', importance_reason_ru: original.importance_reason_ru || '', severity_reason_ru: original.severity_reason_ru || '',
     version_labels: Array.isArray(original.version_labels) ? original.version_labels : [],
     explicit_build_ids: Array.isArray(original.explicit_build_ids) ? original.explicit_build_ids : [],
-    change_types: Array.isArray(original.change_types) ? original.change_types : [] };
+    change_types: Array.isArray(original.change_types) ? original.change_types : [],
+    change_type_evidence: classificationEvidence(original) };
 }
 
 export function eventMatchesId(event, eventId) {

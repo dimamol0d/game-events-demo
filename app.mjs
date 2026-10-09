@@ -1,12 +1,14 @@
 import { api, ApiError } from './api.mjs?v=20261009-library3';
 import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261009-library3';
-import { shell, homePage, libraryPage, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261009-library3';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261009-library3';
 import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261009-library3';
 import { loadRuntimeConfig } from './config.mjs?v=20261009-library3';
 import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261009-library3';
 import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261009-library3';
 import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261009-library3';
 import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261009-library3';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261009-library3';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261009-library3';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -44,8 +46,127 @@ const feed = createFeedPager((filters, signal) => api.libraryFeed(filters, signa
 });
 let feedLibraryKey = '';
 const bulk = createBulkSelection();
+let bulkCollectionId = null;
 const filterPreview = createToolRead((payload, signal) => api.previewPreferences(payload, signal), drawFilterPreview);
 const recap = createRecapPager((filters, signal) => api.recap(filters, signal), drawRecapResults);
+const collections = createCollectionTools();
+let collectionReadEpoch = 0;
+let collectionReadController;
+let collectionRevision = 0;
+
+function reconcileCollections() {
+  if (!state.bootstrap) return;
+  collections.reconcile(state.bootstrap.library, state.bootstrap.collections || []);
+  state.bootstrap.collections = collections.collections;
+}
+function currentLibraryPage() {
+  reconcileCollections();
+  return libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status, { ...collections.state, collections: collections.collections });
+}
+function drawLibraryCollections() {
+  if (state.route.page !== 'library') return;
+  const region = document.querySelector('#library-game-list');
+  if (region) region.innerHTML = libraryGameRows(state.bootstrap.library, collections.collections, collections.state);
+  document.querySelectorAll('[data-action="collection-filter"]').forEach(button => { const active = String(button.dataset.collectionId) === String(collections.state.filter); button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); });
+  const item = collections.group(collections.state.filter);
+  const actions = document.querySelector('#collection-library-action');
+  if (actions) actions.innerHTML = item ? `<a class="button small secondary" href="#bulk?collection=${item.id}">Настроить этот список</a><a class="text-link" href="#collection/${item.id}">Изменить состав</a>` : '';
+}
+function drawCollections({ focus = false } = {}) {
+  if (!state.bootstrap) return;
+  reconcileCollections();
+  if (state.route.page === 'collections') setMain(collectionsPage(collections), focus);
+  else if (state.route.page === 'collection') setMain(collectionPage(collections), focus);
+  else if (state.route.page === 'game-lists') setMain(gameCollectionsPage(collections, state.bootstrap.library), focus);
+}
+function drawCollectionSelection() {
+  if (state.route.page !== 'collection') return;
+  const region = document.querySelector('#collection-game-list');
+  if (region) region.innerHTML = collectionRows(collections);
+  const count = document.querySelector('#collection-selection-count');
+  if (count) count.textContent = `Выбрано: ${collections.state.selected.size}`;
+  for (const action of ['collection-add-games', 'collection-remove-games']) { const button = document.querySelector(`[data-action="${action}"]`); if (button) button.disabled = collections.state.busy || !collections.state.selected.size; }
+}
+function cancelCollectionReads() {
+  collectionReadEpoch++; collectionReadController?.abort(); collectionReadController = null; collections.state.loading = false;
+}
+async function refreshCollections() {
+  if (!state.bootstrap || collections.state.busy) return;
+  cancelCollectionReads();
+  const read = collectionReadEpoch; const owner = authenticationEpoch; const revision = collectionRevision;
+  collectionReadController = new AbortController(); const signal = collectionReadController.signal;
+  collections.state.loading = true; collections.state.error = ''; drawCollections();
+  try {
+    const result = await api.collections(signal);
+    if (owner !== authenticationEpoch || read !== collectionReadEpoch || revision !== collectionRevision || !state.bootstrap) return;
+    state.bootstrap.collections = result.collections || []; reconcileCollections();
+    if (state.route.page === 'game-lists') collections.startGame(state.route.appId, { force: true });
+    if (state.route.page === 'collection') collections.state.name = collections.group()?.name || '';
+  } catch (error) { if (owner === authenticationEpoch && read === collectionReadEpoch && !signal.aborted) collections.state.error = 'Не удалось обновить списки. ' + error.message; }
+  finally { if (owner === authenticationEpoch && read === collectionReadEpoch) { collectionReadController = null; collections.state.loading = false; drawCollections(); } }
+}
+function acceptCollection(item) {
+  if (!item || !Number.isSafeInteger(Number(item.id))) throw new Error('Сервер не подтвердил состав списка. Обновите списки и проверьте результат.');
+  const previous = state.bootstrap.collections || [];
+  state.bootstrap.collections = previous.some(group => Number(group.id) === Number(item.id)) ? previous.map(group => Number(group.id) === Number(item.id) ? item : group) : [...previous, item];
+  collectionRevision++; reconcileCollections();
+}
+async function writeCollection(task, accept, message) {
+  if (!state.bootstrap || collections.state.busy) return;
+  const owner = authenticationEpoch;
+  cancelCollectionReads(); collectionRevision++;
+  collections.state.busy = true; collections.state.error = ''; collections.state.message = 'Сохраняем списки…'; drawCollections();
+  try {
+    const result = await task();
+    if (owner !== authenticationEpoch || !state.bootstrap) return;
+    accept(result); collections.state.message = message; toast(message);
+  } catch (error) { if (owner === authenticationEpoch) collections.state.error = `Не удалось подтвердить сохранение. ${error.message} При потере ответа изменение могло сохраниться; повторите тот же выбор или обновите списки.`; }
+  finally { if (owner === authenticationEpoch) { collections.state.busy = false; drawCollections(); if (state.route.page === 'library') setMain(currentLibraryPage()); } }
+}
+async function createCollection(form) {
+  if (state.route.page !== 'collections' || collections.state.busy) return;
+  const name = normalizeCollectionName(form.elements.name.value); collections.state.createName = name;
+  const error = collectionNameError(name, [], null);
+  if (error) { collections.state.error = error; drawCollections(); return; }
+  await writeCollection(() => api.createCollection(name), result => { acceptCollection(result.collection); collections.state.createName = ''; }, 'Список готов. Теперь можно добавить игры.');
+}
+async function renameCollection(form) {
+  if (state.route.page !== 'collection' || collections.state.busy || !collections.group()) return;
+  const id = state.route.collectionId; const name = normalizeCollectionName(form.elements.name.value); collections.state.name = name;
+  const error = collectionNameError(name, collections.collections, id);
+  if (error) { collections.state.error = error; drawCollections(); return; }
+  await writeCollection(() => api.renameCollection(id, name), result => acceptCollection(result.collection), 'Название списка сохранено.');
+}
+async function saveGameCollections(form) {
+  if (state.route.page !== 'game-lists' || collections.state.busy || !state.bootstrap.library.some(game => Number(game.app_id) === state.route.appId)) return;
+  const appId = state.route.appId; const ids = [...collections.state.gameSelected];
+  await writeCollection(() => api.saveGameCollections(appId, ids), result => {
+    if (Number(result.app_id) !== appId || !Array.isArray(result.collections)) throw new Error('Сервер вернул неполный результат. Проверьте списки.');
+    state.bootstrap.collections = result.collections; collectionRevision++; reconcileCollections();
+  }, 'Списки игры сохранены. Настройки уведомлений остались прежними.');
+}
+async function handleCollectionAction(action, button) {
+  if (!state.bootstrap) return;
+  if (action === 'collection-filter') {
+    if (state.route.page !== 'library') return;
+    const filter = button.dataset.collectionId;
+    if (!['all', 'unsorted'].includes(filter) && !collections.group(Number(filter))) return;
+    collections.state.filter = ['all', 'unsorted'].includes(filter) ? filter : Number(filter); drawLibraryCollections(); return;
+  }
+  if (action === 'collections-refresh') { await refreshCollections(); return; }
+  if (state.route.page !== 'collection' || collections.state.busy || !collections.group()) return;
+  if (action === 'collection-select' || action === 'collection-clear') { if (action === 'collection-select') collections.selectFiltered(); else collections.state.selected.clear(); drawCollectionSelection(); return; }
+  const id = state.route.collectionId;
+  if (action === 'collection-delete-request' || action === 'collection-delete-cancel') { collections.state.deleteId = action === 'collection-delete-request' ? id : null; const region = document.querySelector('#collection-delete-confirm'); if (region) region.hidden = collections.state.deleteId !== id; return; }
+  if (action === 'collection-delete-confirm' && collections.state.deleteId === id) {
+    await writeCollection(() => api.deleteCollection(id), () => { state.bootstrap.collections = state.bootstrap.collections.filter(item => Number(item.id) !== id); collectionRevision++; reconcileCollections(); collections.state.deleteId = null; if (state.route.page === 'collection' && state.route.collectionId === id) location.hash = '#collections'; }, 'Список удалён. Все игры остались в библиотеке.'); return;
+  }
+  if (action === 'collection-add-games' || action === 'collection-remove-games') {
+    reconcileCollections(); const ids = [...collections.state.selected]; if (!ids.length) return;
+    const present = action === 'collection-add-games';
+    await writeCollection(() => api.setCollectionGames(id, ids, present), result => acceptCollection(result.collection), present ? 'Выбранные игры добавлены в список.' : 'Выбранные игры убраны только из этого списка.');
+  }
+}
 
 function hasPreferenceWrite(appId) { return preferenceWrites.get(Number(appId))?.owner === authenticationEpoch; }
 function reservePreferenceWrites(appIds) {
@@ -487,17 +608,22 @@ function updateUnread(count) {
   document.querySelectorAll('[data-unread]').forEach(badge => { badge.textContent = String(count || ''); badge.hidden = !count; });
 }
 function updateNavigation() {
-  const active = ['game', 'settings', 'feed', 'bulk', 'recap'].includes(state.route.page) ? 'library' : state.route.page;
+  const active = ['game', 'settings', 'feed', 'bulk', 'recap', 'collections', 'collection', 'game-lists'].includes(state.route.page) ? 'library' : state.route.page;
   document.querySelectorAll('.nav-item').forEach(link => {
     const current = link.hash === '#' + active;
     link.classList.toggle('active', current);
     if (current) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
   });
-  telegram.updateBack(['game', 'settings', 'feed', 'profile', 'bulk', 'recap'].includes(state.route.page) ? () => { location.hash = state.route.page === 'settings' ? `#game/${state.route.appId}` : '#library'; } : null);
+  telegram.updateBack(['game', 'settings', 'feed', 'profile', 'bulk', 'recap', 'collections', 'collection', 'game-lists'].includes(state.route.page) ? () => { location.hash = ['settings', 'game-lists'].includes(state.route.page) ? `#game/${state.route.appId}` : state.route.page === 'collection' ? '#collections' : '#library'; } : null);
 }
 
 async function syncBootstrap() {
-  state.bootstrap = await api.bootstrap();
+  const owner = authenticationEpoch; const revision = collectionRevision;
+  const fresh = await api.bootstrap();
+  if (owner !== authenticationEpoch) return state.bootstrap;
+  if (revision !== collectionRevision && state.bootstrap) fresh.collections = state.bootstrap.collections;
+  state.bootstrap = fresh;
+  reconcileCollections();
   steamSelection.reconcile(state.bootstrap.library);
   bootstrapUpdatedAt = Date.now();
   updateUnread(state.bootstrap.unread_count);
@@ -590,7 +716,7 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
       if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden]), #steam-panel:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
       const scroll = window.scrollY;
       if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-      else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+      else if (state.route.page === 'library') setMain(currentLibraryPage());
       else if (state.route.page === 'inbox') {
         const result = await api.notifications();
         if (epoch !== navigationEpoch) return;
@@ -612,14 +738,15 @@ async function loadRoute({ focus = true, force = false } = {}) {
   feed.cancel();
   filterPreview.cancel({ clear: true });
   recap.cancel();
+  cancelCollectionReads();
   cancelSteamReads();
   const previous = state.route;
   state.route = parseRoute(location.hash);
   const route = state.route;
   const epoch = ++navigationEpoch;
   updateNavigation();
-  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления', profile: 'Мой профиль', bulk: 'Массовые настройки', recap: 'Пока вы не играли' }[route.page] || 'Главная') + ' — Игровой радар';
-  if (previous.page !== route.page || previous.appId !== route.appId) window.scrollTo({ top: 0, behavior: 'instant' });
+  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления', profile: 'Мой профиль', bulk: 'Массовые настройки', recap: 'Пока вы не играли', collections: 'Мои списки', collection: 'Список игр', 'game-lists': 'Списки игры' }[route.page] || 'Главная') + ' — Игровой радар';
+  if (previous.page !== route.page || previous.appId !== route.appId || previous.collectionId !== route.collectionId) window.scrollTo({ top: 0, behavior: 'instant' });
   if (route.page === 'home') {
     setMain(homePage(state.bootstrap, state.config), focus);
     if (force || Date.now() - bootstrapUpdatedAt > 5000) {
@@ -642,9 +769,9 @@ async function loadRoute({ focus = true, force = false } = {}) {
     return;
   }
   if (route.page === 'library') {
-    setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status), focus);
+    setMain(currentLibraryPage(), focus);
     if (force || Date.now() - bootstrapUpdatedAt > 5000) {
-      try { await syncBootstrap(); if (epoch === navigationEpoch) setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status)); }
+      try { await syncBootstrap(); if (epoch === navigationEpoch) setMain(currentLibraryPage()); }
       catch (error) { if (epoch === navigationEpoch) setMain(errorState(error.message)); }
     }
     scheduleOverviewPoll(epoch);
@@ -664,6 +791,12 @@ async function loadRoute({ focus = true, force = false } = {}) {
   if (route.page === 'bulk') {
     bulk.reconcile(state.bootstrap.library);
     if (!state.bootstrap.library.length) { location.hash = '#library'; return; }
+    if (route.collectionId && !bulk.state.busy && (previous.page !== 'bulk' || previous.collectionId !== route.collectionId || bulkCollectionId !== route.collectionId)) {
+      reconcileCollections(); const item = collections.group(route.collectionId);
+      if (!item) { toast('Этот список больше недоступен. Выберите игры в библиотеке.'); location.hash = '#collections'; return; }
+      bulk.state.selected = new Set(item.app_ids); bulk.state.query = ''; bulk.state.patch = {}; bulk.state.error = ''; bulk.state.message = `Выбраны игры списка «${item.name}». Отметьте настройки, которые хотите изменить.`;
+      bulkCollectionId = route.collectionId;
+    }
     setMain(bulkPage(bulk), focus);
     syncBulkFields(document.querySelector('#bulk-preferences-form'));
     drawBulkChanges();
@@ -676,6 +809,14 @@ async function loadRoute({ focus = true, force = false } = {}) {
     recap.setFilters({ ...recap.state.filters, app_id: appId }, { force });
     setMain(recapPage(recap.state, library), focus);
     if (appId && (force || !recap.state.result)) await recap.load();
+    return;
+  }
+  if (['collections', 'collection', 'game-lists'].includes(route.page)) {
+    reconcileCollections();
+    if (route.page === 'collection') collections.startList(route.collectionId);
+    if (route.page === 'game-lists') collections.startGame(route.appId, { force: force || previous.page !== 'game-lists' || previous.appId !== route.appId });
+    drawCollections({ focus });
+    if (force) await refreshCollections();
     return;
   }
   if (route.page === 'game' && state.game?.game.app_id === route.appId && !force) {
@@ -740,14 +881,16 @@ async function runSearch() {
 }
 
 function renderAfterLibraryChange() {
+  reconcileCollections();
   if (state.route.page === 'search') {
     const region = document.querySelector('#search-results');
     if (region && state.search.result) region.innerHTML = searchResults(state.search.result, state.bootstrap.library);
   } else if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-  else if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+  else if (state.route.page === 'library') setMain(currentLibraryPage());
   else if (state.route.page === 'game') renderGame();
   else if (state.route.page === 'bulk') { bulk.reconcile(state.bootstrap.library); setMain(bulkPage(bulk)); drawFilterPreview(); }
   else if (state.route.page === 'recap') { recap.cancel(); recap.setFilters({ ...recap.state.filters, app_id: state.bootstrap.library[0]?.app_id }, { force: true }); setMain(recapPage(recap.state, state.bootstrap.library)); }
+  else if (['collections', 'collection', 'game-lists'].includes(state.route.page)) drawCollections();
 }
 
 async function mutateButton(button, key, task) {
@@ -767,6 +910,7 @@ document.addEventListener('click', async event => {
   const action = button.dataset.action;
   const appId = Number(button.dataset.appId);
   if (action === 'steam-callback-retry') { await verifySteamCallback(); return; }
+  if (action.startsWith('collection')) { await handleCollectionAction(action, button); return; }
   if (action === 'filter-preview') { await runFilterPreview(); return; }
   if (action === 'bulk-select' || action === 'bulk-clear') {
     if (state.route.page !== 'bulk' || bulk.state.busy) return;
@@ -834,7 +978,7 @@ document.addEventListener('click', async event => {
     await api.setTelegramDelivery(enabled);
     await syncBootstrap();
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-    if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'library') setMain(currentLibraryPage());
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
     toast(enabled ? 'Уведомления в Telegram включены.' : 'Уведомления в Telegram выключены.');
   });
@@ -842,7 +986,7 @@ document.addEventListener('click', async event => {
     const result = await api.testTelegramDelivery();
     await syncBootstrap();
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-    if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'library') setMain(currentLibraryPage());
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
     toast(result.message || 'Проверка доставки запрошена. Посмотрите чат с ботом.');
   });
@@ -855,7 +999,7 @@ document.addEventListener('click', async event => {
     await syncBootstrap();
     toast('Уведомления в Telegram включены.');
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-    if (state.route.page === 'library') setMain(libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'library') setMain(currentLibraryPage());
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
   });
   else if (action === 'add') await mutateButton(button, 'add-' + appId, async () => {
@@ -879,6 +1023,7 @@ document.addEventListener('click', async event => {
     await api.remove(appId);
     clearTimeout(gamePollTimer);
     state.bootstrap.library = state.bootstrap.library.filter(game => Number(game.app_id) !== appId);
+    reconcileCollections();
     if (state.game?.game.app_id === appId) state.game.game.preferences = null;
     toast('Убрано из библиотеки. История сохранена.');
     location.hash = '#library';
@@ -908,6 +1053,10 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  if (event.target.id === 'library-game-search' && state.route.page === 'library') { collections.state.libraryQuery = event.target.value; drawLibraryCollections(); return; }
+  if (event.target.id === 'collection-game-search' && state.route.page === 'collection' && !collections.state.busy) { collections.state.query = event.target.value; drawCollectionSelection(); return; }
+  if (event.target.id === 'collection-new-name' && state.route.page === 'collections') { collections.state.createName = event.target.value; return; }
+  if (event.target.id === 'collection-rename' && state.route.page === 'collection') { collections.state.name = event.target.value; return; }
   if (event.target.id === 'bulk-game-search' && state.route.page === 'bulk' && !bulk.state.busy) { bulk.state.query = event.target.value; drawBulkChanges({ rows: true }); return; }
   if (event.target.id === 'steam-game-search' && !steam.busy) {
     steamSelection.state.query = event.target.value; steamSelection.state.shown = 60; drawSteam({ rowsOnly: true }); return;
@@ -936,6 +1085,19 @@ function syncPreferenceNotes(form) {
 }
 
 document.addEventListener('change', async event => {
+  if (event.target.dataset.collectionGame && state.route.page === 'collection') {
+    if (collections.state.busy || collections.state.loading) return;
+    collections.toggle(Number(event.target.dataset.collectionGame), event.target.checked); drawCollectionSelection(); return;
+  }
+  if (event.target.id === 'collection-members-only' && state.route.page === 'collection') {
+    if (collections.state.busy || collections.state.loading) return;
+    collections.state.membersOnly = event.target.checked; drawCollectionSelection(); return;
+  }
+  if (event.target.dataset.gameCollection && state.route.page === 'game-lists') {
+    if (collections.state.busy || collections.state.loading) return;
+    const id = Number(event.target.dataset.gameCollection); if (!collections.group(id)) return;
+    if (event.target.checked) collections.state.gameSelected.add(id); else collections.state.gameSelected.delete(id); return;
+  }
   if (event.target.dataset.bulkId) {
     if (state.route.page !== 'bulk' || bulk.state.busy) return;
     if (!bulk.toggle(Number(event.target.dataset.bulkId), event.target.checked)) toast('Можно выбрать до 100 игр. Снимите выбор с другой игры.');
@@ -1019,6 +1181,9 @@ function readPreferences(form) {
 }
 
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'collection-create-form') { event.preventDefault(); await createCollection(event.target); return; }
+  if (event.target.id === 'collection-rename-form') { event.preventDefault(); await renameCollection(event.target); return; }
+  if (event.target.id === 'game-collections-form') { event.preventDefault(); await saveGameCollections(event.target); return; }
   if (event.target.id === 'bulk-preferences-form') { event.preventDefault(); await saveBulkPreferences(event.target); return; }
   if (event.target.id === 'recap-filters') {
     event.preventDefault();
@@ -1082,7 +1247,7 @@ document.addEventListener('submit', async event => {
 window.addEventListener('hashchange', () => {
   if (state.bootstrap) loadRoute();
 });
-window.addEventListener('pagehide', () => { feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelSteamReads(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pagehide', () => { feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelCollectionReads(); cancelSteamReads(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   telegram.init();
@@ -1094,7 +1259,7 @@ window.addEventListener('focus', () => {
 });
 document.addEventListener('visibilitychange', () => {
   if (!state.bootstrap) return;
-  if (document.hidden) { clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelSteamReads(); }
+  if (document.hidden) { clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); }
   else {
     scheduleGamePoll(navigationEpoch); scheduleOverviewPoll(navigationEpoch);
     if (['library', 'profile'].includes(state.route.page) && (steam.open || state.route.page === 'profile')) refreshSteam({ preview: true });
@@ -1103,6 +1268,7 @@ document.addEventListener('visibilitychange', () => {
 
 async function start() {
   authenticationEpoch++;
+  cancelCollectionReads(); collectionRevision++; collections.clear();
   preferenceWrites.clear();
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
@@ -1112,6 +1278,7 @@ async function start() {
   recap.cancel();
   recap.setFilters({}, { force: true });
   bulk.clear();
+  bulkCollectionId = null;
   cancelSteamReads();
   if (steamCallback) { await verifySteamCallback(); return; }
   // A fresh Telegram authentication may identify another profile. Do not show
