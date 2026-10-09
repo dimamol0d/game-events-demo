@@ -1,6 +1,6 @@
 import { api, ApiError } from './api.mjs?v=20261009-stability1';
 import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261009-stability1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261009-stability1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261009-stability1';
 import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261009-stability1';
 import { loadRuntimeConfig } from './config.mjs?v=20261009-stability1';
 import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261009-stability1';
@@ -37,6 +37,7 @@ const preferenceWrites = new Map();
 const PREFERENCE_WAIT_MESSAGE = 'Настройки этой игры уже сохраняются. Дождитесь завершения, затем сохраните свой выбор.';
 const BULK_WAIT_MESSAGE = 'Настройки части выбранных игр уже сохраняются. Дождитесь завершения, затем примените свой выбор.';
 const translationRequested = new Set();
+const deliveryDiagnostics = new Map();
 const transfer = { open: false, input: '', entries: [], selected: new Set(), busy: false, message: '', exportText: '', readEpoch: 0 };
 const steam = { open: false, status: null, loginURL: '', loaded: false, busy: '', message: '', error: '', pollCount: 0 };
 const steamSelection = createSteamSelection(LIBRARY_LIMIT);
@@ -55,6 +56,68 @@ const collections = createCollectionTools();
 let collectionReadEpoch = 0;
 let collectionReadController;
 let collectionRevision = 0;
+
+function cancelDeliveryDiagnostics({ clear = false } = {}) {
+  for (const diagnostic of deliveryDiagnostics.values()) {
+    diagnostic.read++; diagnostic.controller?.abort(); diagnostic.controller = null;
+    if (diagnostic.loading) diagnostic.error = 'Проверка прервана. Нажмите «Обновить», чтобы повторить её.';
+    diagnostic.loading = false;
+  }
+  if (clear) deliveryDiagnostics.clear();
+}
+function drawDeliveryDiagnostics() {
+  const panels = document.querySelectorAll('[data-delivery-diagnostic-panel]');
+  const visible = new Set(Array.from(panels, panel => panel.dataset?.eventId).filter(Boolean));
+  for (const [eventId, diagnostic] of deliveryDiagnostics) {
+    if (visible.has(eventId)) continue;
+    diagnostic.read++; diagnostic.controller?.abort(); deliveryDiagnostics.delete(eventId);
+  }
+  panels.forEach(panel => {
+    const eventId = panel.dataset?.eventId;
+    if (!eventId) return;
+    const diagnostic = deliveryDiagnostics.get(eventId);
+    const open = Boolean(diagnostic?.open && diagnostic.owner === authenticationEpoch);
+    panel.hidden = !open;
+    panel.setAttribute('aria-busy', String(open && diagnostic.loading));
+    panel.innerHTML = open ? deliveryDiagnosticPanel(diagnostic, eventId) : '';
+    panel.closest('.event-card')?.querySelector('[data-action="delivery-diagnostic"]')?.setAttribute('aria-expanded', String(open));
+  });
+}
+async function showDeliveryDiagnostic(button, { retry = false } = {}) {
+  if (!state.bootstrap) return;
+  const card = button.closest('.event-card');
+  const panel = card?.querySelector('[data-delivery-diagnostic-panel]');
+  const eventId = String(button.dataset.eventId || '');
+  if (!panel || panel.dataset.eventId !== eventId) return;
+  let diagnostic = deliveryDiagnostics.get(eventId);
+  if (!diagnostic || diagnostic.owner !== authenticationEpoch) {
+    diagnostic = { owner: authenticationEpoch, open: false, loading: false, error: '', result: null, controller: null, read: 0 };
+    deliveryDiagnostics.set(eventId, diagnostic);
+  }
+  diagnostic.read++; diagnostic.controller?.abort(); diagnostic.controller = null;
+  if (diagnostic.open && !retry) { diagnostic.open = false; diagnostic.loading = false; drawDeliveryDiagnostics(); return; }
+  diagnostic.open = true; diagnostic.error = ''; diagnostic.result = null;
+  const id = Number(eventId);
+  if (!/^\d+$/.test(eventId) || !Number.isSafeInteger(id) || id < 1) {
+    diagnostic.loading = false;
+    diagnostic.result = { label_ru: 'Прежнее решение неизвестно', detail_ru: 'У этой старой записи нет сохранённого идентификатора для проверки доставки.', historical_decision: { known: false }, limitations: ['Диагностика доступна для сохранённых событий с числовым идентификатором.'] };
+    drawDeliveryDiagnostics(); return;
+  }
+  const owner = authenticationEpoch; const epoch = navigationEpoch; const read = diagnostic.read;
+  diagnostic.controller = new AbortController(); const signal = diagnostic.controller.signal;
+  const current = () => owner === authenticationEpoch && epoch === navigationEpoch && read === diagnostic.read && diagnostic.open && !signal.aborted && deliveryDiagnostics.get(eventId) === diagnostic;
+  diagnostic.loading = true; drawDeliveryDiagnostics();
+  try {
+    const result = await api.deliveryDiagnostic(id, signal);
+    if (!current()) return;
+    if (!result || Number(result.event_id) !== id) throw new Error('Сервер вернул другую запись. Повторите проверку.');
+    diagnostic.result = result;
+  } catch (error) {
+    if (current()) diagnostic.error = error.message || 'Не удалось получить сохранённую историю доставки.';
+  } finally {
+    if (current()) { diagnostic.loading = false; diagnostic.controller = null; drawDeliveryDiagnostics(); }
+  }
+}
 
 function reconcileCollections() {
   if (!state.bootstrap) return;
@@ -340,6 +403,7 @@ function setMain(html, focus = false) {
   if (transferPanel && main().querySelector('#library-transfer')) main().querySelector('#library-transfer').replaceWith(transferPanel);
   drawTransfer();
   drawSteam();
+  drawDeliveryDiagnostics();
   if (active?.isConnected) active.focus({ preventScroll: true });
   if (focus) main().focus({ preventScroll: true });
 }
@@ -774,6 +838,7 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
 }
 
 async function loadRoute({ focus = true, force = false } = {}) {
+  cancelDeliveryDiagnostics({ clear: true });
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
   clearTimeout(searchTimer);
@@ -953,6 +1018,7 @@ document.addEventListener('click', async event => {
   if (!button) return;
   const action = button.dataset.action;
   const appId = Number(button.dataset.appId);
+  if (action === 'delivery-diagnostic' || action === 'delivery-diagnostic-retry') { await showDeliveryDiagnostic(button, { retry: action === 'delivery-diagnostic-retry' }); return; }
   if (action === 'steam-callback-retry') { await verifySteamCallback(); return; }
   if (action.startsWith('collection')) { await handleCollectionAction(action, button); return; }
   if (action === 'filter-preview') { await runFilterPreview(); return; }
@@ -1305,7 +1371,7 @@ document.addEventListener('submit', async event => {
 window.addEventListener('hashchange', () => {
   if (state.bootstrap) loadRoute();
 });
-window.addEventListener('pagehide', () => { feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelCollectionReads(); cancelSteamReads(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pagehide', () => { cancelDeliveryDiagnostics({ clear: true }); feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelCollectionReads(); cancelSteamReads(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   telegram.init();
@@ -1317,8 +1383,9 @@ window.addEventListener('focus', () => {
 });
 document.addEventListener('visibilitychange', () => {
   if (!state.bootstrap) return;
-  if (document.hidden) { clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); }
+  if (document.hidden) { cancelDeliveryDiagnostics(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); }
   else {
+    drawDeliveryDiagnostics();
     if (['collections', 'collection', 'game-lists'].includes(state.route.page)) drawCollections();
     scheduleGamePoll(navigationEpoch); scheduleOverviewPoll(navigationEpoch);
     if (['library', 'profile'].includes(state.route.page) && (steam.open || state.route.page === 'profile')) refreshSteam({ preview: true });
@@ -1327,6 +1394,7 @@ document.addEventListener('visibilitychange', () => {
 
 async function start() {
   authenticationEpoch++;
+  cancelDeliveryDiagnostics({ clear: true });
   cancelCollectionReads(); collectionRevision++; collections.clear();
   preferenceWrites.clear();
   libraryChanges.clear(); libraryRevision++;

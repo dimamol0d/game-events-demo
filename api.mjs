@@ -236,6 +236,11 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     add: appId => request('/api/library', { method: 'POST', body: { app_id: appId } }),
     remove: appId => request(`/api/library/${appId}`, { method: 'DELETE' }),
     game: (appId, offset = 0) => request(`/api/games/${appId}?${new URLSearchParams({ offset, limit: 30 })}`),
+    deliveryDiagnostic: (eventId, signal) => {
+      const id = Number(eventId);
+      if (!['number', 'string'].includes(typeof eventId) || !/^\d+$/.test(String(eventId)) || !Number.isSafeInteger(id) || id < 1) throw new ApiError('Для этой записи нет сохранённого идентификатора диагностики.');
+      return request(`/api/events/${id}/delivery`, { signal });
+    },
     savePreferences: (appId, preferences) => request(`/api/library/${appId}/preferences`, { method: 'PUT', body: preferences }),
     bulkPreferences: payload => request('/api/library/preferences/bulk', { method: 'POST', body: payload }),
     previewPreferences: (payload, signal) => request('/api/library/preferences/preview', { method: 'POST', body: payload, signal }),

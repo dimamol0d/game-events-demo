@@ -270,6 +270,26 @@ main { max-width: 1380px; margin: 0 auto; padding: 39px 42px 70px; }
 .event-card h3 a:hover { color: #315b93; }
 .event-excerpt { color: var(--muted); font-size: .9rem; max-width: 80ch; margin-bottom: 20px; }
 .event-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; margin-top: 20px; }
+.delivery-diagnostic-button { white-space: normal; text-align: left; min-height: 42px; }
+.delivery-diagnostic-panel { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 20px; font-size: .85rem; overflow-wrap: anywhere; }
+.diagnostic-summary > strong { font-size: .96rem; color: var(--ink); }
+.diagnostic-summary p { margin: 8px 0 16px; }
+.diagnostic-decisions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; padding: 16px; border-radius: 8px; background: var(--subtle-surface); }
+.diagnostic-decisions h4 { margin: 0 0 7px; font-size: .85rem; }
+.diagnostic-decisions p { margin: 0 0 7px; }
+.diagnostic-times { margin: 18px 0; }
+.diagnostic-times > div { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(0, 1.2fr); gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.diagnostic-times dt { color: var(--muted); }
+.diagnostic-times dd { margin: 0; font-variant-numeric: tabular-nums; }
+.diagnostic-time-note, .diagnostic-limitations, .diagnostic-actions small { font-size: .74rem; color: var(--muted); }
+.diagnostic-limitations { padding-left: 18px; }
+.diagnostic-limitations li + li { margin-top: 5px; }
+.diagnostic-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+@media (max-width: 600px) {
+  .diagnostic-decisions { grid-template-columns: 1fr; gap: 12px; padding: 13px; }
+  .diagnostic-times > div { grid-template-columns: 1fr; gap: 3px; }
+  .delivery-diagnostic-button { max-width: 100%; }
+}
 .source-link { display: inline-flex; align-items: center; gap: 6px; color: #496b8e; font-size: .79rem; }
 .source-link:hover { text-decoration: underline; }
 .publication-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: .95rem; max-width: 82ch; }
