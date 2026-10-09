@@ -1,14 +1,14 @@
-import { api, ApiError } from './api.mjs?v=20261009-lists1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261009-lists1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261009-lists1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261009-lists1';
-import { loadRuntimeConfig } from './config.mjs?v=20261009-lists1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261009-lists1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261009-lists1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261009-lists1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261009-lists1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261009-lists1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261009-lists1';
+import { api, ApiError } from './api.mjs?v=20261009-stability1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261009-stability1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261009-stability1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261009-stability1';
+import { loadRuntimeConfig } from './config.mjs?v=20261009-stability1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261009-stability1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261009-stability1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261009-stability1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261009-stability1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261009-stability1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261009-stability1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
