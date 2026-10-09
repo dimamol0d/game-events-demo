@@ -27,6 +27,8 @@ let toastTimer;
 let gamePollTimer;
 let overviewPollTimer;
 let bootstrapUpdatedAt = 0;
+let libraryRevision = 0;
+const libraryChanges = new Map();
 const mutations = new Set();
 // A delayed bulk response must never overwrite a later individual save (or
 // the reverse). Locks belong to the authenticated owner and each selected game,
@@ -58,6 +60,23 @@ function reconcileCollections() {
   if (!state.bootstrap) return;
   collections.reconcile(state.bootstrap.library, state.bootstrap.collections || []);
   state.bootstrap.collections = collections.collections;
+}
+function rememberLibraryChanges(appIds) {
+  if (!appIds.length) return;
+  const revision = ++libraryRevision;
+  for (const appId of appIds) libraryChanges.set(Number(appId), revision);
+}
+function preserveLibraryChanges(fresh, revision) {
+  if (!state.bootstrap || revision === libraryRevision) return;
+  const changed = new Set([...libraryChanges].filter(([, changedAt]) => changedAt > revision).map(([appId]) => appId));
+  const current = new Map(state.bootstrap.library.map(game => [Number(game.app_id), game]));
+  const seen = new Set();
+  fresh.library = fresh.library.flatMap(game => {
+    const appId = Number(game.app_id); seen.add(appId);
+    if (!changed.has(appId)) return [game];
+    return current.has(appId) ? [current.get(appId)] : [];
+  });
+  for (const appId of changed) if (!seen.has(appId) && current.has(appId)) fresh.library.push(current.get(appId));
 }
 function currentLibraryPage() {
   reconcileCollections();
@@ -268,6 +287,7 @@ async function saveBulkPreferences(form) {
     const games = new Map((result.games || []).filter(game => selected.has(Number(game.app_id))).map(game => [Number(game.app_id), game]));
     if (games.size !== selected.size) throw new Error('Сервер вернул неполный результат. Проверьте библиотеку; повтор сохраняет тот же выбор без дубликатов.');
     state.bootstrap.library = state.bootstrap.library.map(game => games.has(Number(game.app_id)) ? { ...game, preferences: games.get(Number(game.app_id)).preferences } : game);
+    rememberLibraryChanges(payload.app_ids);
     if (state.game && games.has(Number(state.game.game.app_id))) state.game.game.preferences = games.get(Number(state.game.game.app_id)).preferences;
     bulk.reconcile(state.bootstrap.library);
     bulk.state.message = `Сохранено. Изменено игр: ${result.updated}. Уже настроены так: ${result.unchanged}.`;
@@ -460,6 +480,7 @@ function rememberImportedGames(progress) {
     if (confirmed.has(game.app_id)) library.set(game.app_id, game);
   }
   state.bootstrap.library = [...library.values()];
+  rememberLibraryChanges((progress.result.games || []).filter(game => confirmed.has(game.app_id)).map(game => game.app_id));
 }
 
 function restoreLibraryImportUI() {
@@ -624,10 +645,14 @@ function updateNavigation() {
 }
 
 async function syncBootstrap() {
-  const owner = authenticationEpoch; const revision = collectionRevision;
+  const owner = authenticationEpoch; const revision = collectionRevision; const libraryReadRevision = libraryRevision;
   const fresh = await api.bootstrap();
   if (owner !== authenticationEpoch) return state.bootstrap;
   if (revision !== collectionRevision && state.bootstrap) fresh.collections = state.bootstrap.collections;
+  // Only rows changed after this read began override its snapshot. Confirmed
+  // additions, removals and preferences survive without hiding other games'
+  // newly fetched data.
+  preserveLibraryChanges(fresh, libraryReadRevision);
   state.bootstrap = fresh;
   reconcileCollections();
   steamSelection.reconcile(state.bootstrap.library);
@@ -636,10 +661,20 @@ async function syncBootstrap() {
   return state.bootstrap;
 }
 
-function updateGameSummary(game) {
+function preserveGamePreferences(game, readRevision) {
+  const appId = Number(game.app_id);
+  if (!state.bootstrap || (libraryChanges.get(appId) || 0) <= readRevision) return game;
+  // A game/history read may predate a confirmed settings or membership write.
+  // Keep its new source/history fields, but use the current tracking rules.
+  const tracked = state.bootstrap.library.find(item => Number(item.app_id) === appId);
+  return { ...game, preferences: tracked?.preferences ?? null };
+}
+function updateGameSummary(game, readRevision) {
+  game = preserveGamePreferences(game, readRevision);
   for (const key of ['library', 'featured']) {
     state.bootstrap[key] = state.bootstrap[key].map(previous => Number(previous.app_id) === Number(game.app_id) ? { ...previous, ...game } : previous);
   }
+  return game;
 }
 
 function renderGame({ focus = false, loadingMore = false } = {}) {
@@ -674,10 +709,11 @@ async function requestTranslation(event, shortOnly = false) {
     scheduleGamePoll(epoch, 2500);
   } else {
     const index = state.game.events.findIndex(item => String(item.id) === String(event.id));
+    const libraryReadRevision = libraryRevision;
     const fresh = await api.game(state.route.appId, Math.floor(Math.max(0, index) / 30) * 30);
     if (epoch !== navigationEpoch || state.route.page !== 'game') return false;
     state.game.events = mergeEvents(state.game.events, fresh.events);
-    updateGameSummary(fresh.game);
+    updateGameSummary(fresh.game, libraryReadRevision);
     renderGame();
   }
   return result.queued;
@@ -692,9 +728,10 @@ function scheduleGamePoll(epoch, delay = 4500) {
     try {
       const index = state.game.events.findIndex(item => eventMatchesId(item, state.route.eventId));
       const selectedOffset = Math.floor(Math.max(0, index) / 30) * 30;
+      const libraryReadRevision = libraryRevision;
       const [fresh, selectedPage] = await Promise.all([api.game(appId), selectedOffset ? api.game(appId, selectedOffset) : Promise.resolve(null)]);
       if (epoch !== navigationEpoch) return;
-      updateGameSummary(fresh.game);
+      fresh.game = updateGameSummary(fresh.game, libraryReadRevision);
       const merged = mergeEvents(state.game.events, [...fresh.events, ...(selectedPage?.events || [])]).sort((a, b) => (Date.parse(b.sort_at || b.published_at || b.detected_at) || 0) - (Date.parse(a.sort_at || a.published_at || a.detected_at) || 0));
       state.game = { ...fresh, events: merged, pagination: state.game.events.length > 30 ? state.game.pagination : fresh.pagination };
       const scroll = window.scrollY;
@@ -840,10 +877,11 @@ async function loadRoute({ focus = true, force = false } = {}) {
       setMain(inboxPage(result, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
       scheduleOverviewPoll(epoch);
     } else {
+      const libraryReadRevision = libraryRevision;
       const result = await api.game(route.appId);
       if (epoch !== navigationEpoch) return;
+      result.game = updateGameSummary(result.game, libraryReadRevision);
       state.game = result;
-      updateGameSummary(result.game);
       document.title = result.game.name + (route.page === 'settings' ? ' — Настройки' : '') + ' — Игровой радар';
       if (route.page === 'settings') {
         if (!state.bootstrap.library.some(game => game.app_id === route.appId)) {
@@ -1009,8 +1047,11 @@ document.addEventListener('click', async event => {
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
   });
   else if (action === 'add') await mutateButton(button, 'add-' + appId, async () => {
+    const owner = authenticationEpoch;
     const result = await api.add(appId);
+    if (owner !== authenticationEpoch || !state.bootstrap) return;
     if (!state.bootstrap.library.some(game => game.app_id === appId)) state.bootstrap.library.push(result.game);
+    rememberLibraryChanges([appId]);
     if (state.game?.game.app_id === appId) state.game.game = result.game;
     renderAfterLibraryChange();
     toast(result.game.name + ' — добавлено в библиотеку.');
@@ -1026,19 +1067,28 @@ document.addEventListener('click', async event => {
     }
   });
   else if (action === 'remove') await mutateButton(button, 'remove-' + appId, async () => {
+    const owner = authenticationEpoch; const epoch = navigationEpoch;
     await api.remove(appId);
-    clearTimeout(gamePollTimer);
+    if (owner !== authenticationEpoch || !state.bootstrap) return;
+    if (state.route.page === 'game' && state.route.appId === appId) clearTimeout(gamePollTimer);
     state.bootstrap.library = state.bootstrap.library.filter(game => Number(game.app_id) !== appId);
+    rememberLibraryChanges([appId]);
     reconcileCollections();
+    bulk.reconcile(state.bootstrap.library);
     if (state.game?.game.app_id === appId) state.game.game.preferences = null;
     toast('Убрано из библиотеки. История сохранена.');
-    location.hash = '#library';
+    if (epoch === navigationEpoch) location.hash = '#library';
+    // Keep an already displayed recap and its chosen filters while an
+    // unrelated background unsubscribe completes.
+    else if (state.route.page !== 'recap') renderAfterLibraryChange();
   });
   else if (action === 'more') await mutateButton(button, 'more-' + state.route.appId, async () => {
     const epoch = navigationEpoch;
     const offset = state.game.pagination?.next_offset;
+    const libraryReadRevision = libraryRevision;
     const result = await api.game(state.route.appId, offset ?? state.game.events.length);
     if (epoch !== navigationEpoch) return;
+    result.game = preserveGamePreferences(result.game, libraryReadRevision);
     state.game = { ...result, events: mergeEvents(state.game.events, result.events) };
     const scroll = window.scrollY;
     renderGame();
@@ -1241,10 +1291,12 @@ document.addEventListener('submit', async event => {
         const result = await api.savePreferences(appId, prefs);
         if (owner !== authenticationEpoch || !state.bootstrap) return;
         state.bootstrap.library = state.bootstrap.library.map(game => game.app_id === appId ? { ...game, preferences: result.preferences } : game);
+        rememberLibraryChanges([appId]);
         if (state.game?.game.app_id === appId) state.game.game.preferences = result.preferences;
         bulk.reconcile(state.bootstrap.library);
-        message.textContent = 'Настройки сохранены.';
-        toast('Настройки сохранены. Новые события будут проходить эти правила.');
+        const newerDraft = JSON.stringify(readPreferences(form)) !== JSON.stringify(prefs);
+        message.textContent = newerDraft ? 'Предыдущий выбор сохранён. Есть несохранённые изменения.' : 'Настройки сохранены.';
+        toast(newerDraft ? 'Предыдущий выбор сохранён. Сохраните новые изменения отдельно.' : 'Настройки сохранены. Новые события будут проходить эти правила.');
       } catch (error) { if (owner === authenticationEpoch) { message.textContent = 'Не сохранено. ' + error.message; throw error; } }
     });
   } finally { releasePreferenceWrites(reservation); }
@@ -1277,6 +1329,7 @@ async function start() {
   authenticationEpoch++;
   cancelCollectionReads(); collectionRevision++; collections.clear();
   preferenceWrites.clear();
+  libraryChanges.clear(); libraryRevision++;
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
   searchController?.abort();
