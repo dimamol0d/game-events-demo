@@ -1,14 +1,14 @@
-import { api, ApiError } from './api.mjs?v=20261009-library3';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261009-library3';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261009-library3';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261009-library3';
-import { loadRuntimeConfig } from './config.mjs?v=20261009-library3';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261009-library3';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261009-library3';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261009-library3';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261009-library3';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261009-library3';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261009-library3';
+import { api, ApiError } from './api.mjs?v=20261009-lists1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261009-lists1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen } from './views.mjs?v=20261009-lists1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261009-lists1';
+import { loadRuntimeConfig } from './config.mjs?v=20261009-lists1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261009-lists1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261009-lists1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261009-lists1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261009-lists1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261009-lists1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261009-lists1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -279,10 +279,16 @@ async function saveBulkPreferences(form) {
       bulk.state.busy = false;
       if (form.isConnected) controls.forEach((control, index) => { control.disabled = disabled[index]; });
       if (state.route.page === 'bulk') {
-        // Navigation can replace the original form while this write is in
-        // flight. Rebuild that form from the confirmed owner state on return.
-        if (!form.isConnected) { setMain(bulkPage(bulk)); syncBulkFields(document.querySelector('#bulk-preferences-form')); }
-        drawBulkChanges({ rows: true }); drawFilterPreview();
+        // A different list requested during this write could not apply its
+        // selection while busy. Use the latest route once the save settles.
+        if (state.route.collectionId && bulkCollectionId !== state.route.collectionId) {
+          await loadRoute({ focus: false });
+        } else {
+          // Navigation can replace the original form while this write is in
+          // flight. Keep the same list's deliberate selection and draft.
+          if (!form.isConnected) { setMain(bulkPage(bulk)); syncBulkFields(document.querySelector('#bulk-preferences-form')); }
+          drawBulkChanges({ rows: true }); drawFilterPreview();
+        }
       }
     }
   }
@@ -1261,6 +1267,7 @@ document.addEventListener('visibilitychange', () => {
   if (!state.bootstrap) return;
   if (document.hidden) { clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); }
   else {
+    if (['collections', 'collection', 'game-lists'].includes(state.route.page)) drawCollections();
     scheduleGamePoll(navigationEpoch); scheduleOverviewPoll(navigationEpoch);
     if (['library', 'profile'].includes(state.route.page) && (steam.open || state.route.page === 'profile')) refreshSteam({ preview: true });
   }

@@ -1,6 +1,6 @@
-import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, eventUnderstanding, eventMatchesId, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, modesForPreferences, MODES, DEFAULT_PREFS, TRANSLATION_MODES } from './model.mjs?v=20261009-library3';
-import { libraryCollectionFilters } from './collections-views.mjs?v=20261009-library3';
-import { collectionGames } from './collections.mjs?v=20261009-library3';
+import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, eventUnderstanding, eventMatchesId, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, modesForPreferences, MODES, DEFAULT_PREFS, TRANSLATION_MODES } from './model.mjs?v=20261009-lists1';
+import { libraryCollectionFilters } from './collections-views.mjs?v=20261009-lists1';
+import { collectionGames } from './collections.mjs?v=20261009-lists1';
 
 const paths = {
   home: '<path d="m3 11 9-8 9 8M5 10v11h5v-7h4v7h5V10"/>',

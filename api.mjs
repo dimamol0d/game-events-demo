@@ -11,6 +11,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
   let expiresAt = 0;
   let authTask = null;
   let generation = 0;
+  let ownerGeneration = 0;
   let refreshConfig = null;
   let recoveryTask = null;
   let lastRecoveryAt = -Infinity;
@@ -25,7 +26,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
   function configure(next, provider = () => '', reloadConfig = null) {
     // A new owner configuration invalidates in-flight authentication/discovery,
     // even when the endpoint happens to be unchanged.
-    generation++; token = ''; expiresAt = 0; authTask = null; recoveryTask = null; lastRecoveryAt = -Infinity;
+    ownerGeneration++; generation++; token = ''; expiresAt = 0; authTask = null; recoveryTask = null; lastRecoveryAt = -Infinity;
     applyConfig(next);
     initDataProvider = provider;
     refreshConfig = typeof reloadConfig === 'function' ? reloadConfig : null;
@@ -33,6 +34,10 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
 
   function abortIfNeeded(signal) {
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException('Запрос отменён.', 'AbortError');
+  }
+
+  function assertOwner(owner) {
+    if (owner !== ownerGeneration) throw new ApiError('Профиль изменился. Повторите действие в текущем профиле.', 'owner_changed');
   }
 
   async function waitFor(promise, signal) {
@@ -134,17 +139,25 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     return task;
   }
 
-  async function authenticate(force = false, { signal, allowRecovery = true, recovery = { used: false } } = {}) {
+  async function authenticate(force = false, { signal, allowRecovery = true, recovery = { used: false }, owner = ownerGeneration } = {}) {
     for (let attempt = 0; attempt < 2; attempt++) {
       abortIfNeeded(signal);
+      assertOwner(owner);
       const task = authenticationTask(force);
-      try { return await waitFor(task.promise, signal); }
+      try {
+        const result = await waitFor(task.promise, signal);
+        assertOwner(owner);
+        return result;
+      }
       catch (error) {
         abortIfNeeded(signal);
+        assertOwner(owner);
         if (attempt === 0 && task.generation !== generation) continue;
         if (attempt === 0 && allowRecovery && !recovery.used && isTransportFailure(error)) {
           recovery.used = true;
-          if (await recover(task, error, signal)) continue;
+          const changed = await recover(task, error, signal);
+          assertOwner(owner);
+          if (changed) continue;
         }
         throw error;
       }
@@ -152,25 +165,41 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
   }
 
   async function request(path, options = {}) {
+    // Endpoint discovery keeps the same owner; explicit configure starts a
+    // new owner session. Never carry a previous owner's action into it.
+    const owner = ownerGeneration;
     const recovery = { used: false };
-    await authenticate(false, { signal: options.signal, recovery });
+    await authenticate(false, { signal: options.signal, recovery, owner });
+    assertOwner(owner);
     const target = endpoint();
-    try { return await send(path, options, target.remote ? token : '', target); }
+    try {
+      const result = await send(path, options, target.remote ? token : '', target);
+      assertOwner(owner);
+      return result;
+    }
     catch (error) {
       abortIfNeeded(options.signal);
+      assertOwner(owner);
       if (error.status === 401 && target.remote) {
         if (target.generation === generation) { token = ''; expiresAt = 0; }
-        await authenticate(true, { signal: options.signal, allowRecovery: false });
-        return await send(path, options, token);
+        await authenticate(true, { signal: options.signal, allowRecovery: false, owner });
+        assertOwner(owner);
+        const result = await send(path, options, token);
+        assertOwner(owner);
+        return result;
       }
       if (!recovery.used && isTransportFailure(error)) {
         recovery.used = true;
         const changed = await recover(target, error, options.signal);
+        assertOwner(owner);
         // A lost mutation response may already have been applied. Only reads
         // can be automatically replayed after discovering another tunnel.
         if (changed && (options.method ?? 'GET') === 'GET') {
-          await authenticate(false, { signal: options.signal, allowRecovery: false });
-          return await send(path, options, config.remote ? token : '');
+          await authenticate(false, { signal: options.signal, allowRecovery: false, owner });
+          assertOwner(owner);
+          const result = await send(path, options, config.remote ? token : '');
+          assertOwner(owner);
+          return result;
         }
       }
       throw error;

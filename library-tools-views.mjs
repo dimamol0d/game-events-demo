@@ -1,6 +1,6 @@
-import { escapeHTML as h, formatDate, eventLabel, eventRoute, publicationLanguage, DEFAULT_PREFS, MODES, TRANSLATION_MODES } from './model.mjs?v=20261009-library3';
-import { pageHeader, emptyState, loadingState, externalLink, icon } from './views.mjs?v=20261009-library3';
-import { PREFERENCE_LABELS, preferenceLabel } from './library-tools.mjs?v=20261009-library3';
+import { escapeHTML as h, formatDate, eventLabel, eventRoute, publicationLanguage, DEFAULT_PREFS, MODES, TRANSLATION_MODES } from './model.mjs?v=20261009-lists1';
+import { pageHeader, emptyState, loadingState, externalLink, icon } from './views.mjs?v=20261009-lists1';
+import { PREFERENCE_LABELS, preferenceLabel } from './library-tools.mjs?v=20261009-lists1';
 
 export function previewPanel() {
   return `<section class="settings-section filter-preview" aria-labelledby="filter-preview-title"><h2 id="filter-preview-title">Предпросмотр уведомлений</h2><p class="subtle">Проверим текущий выбор по сохранённой истории. Настройки не сохраняются, сообщения не отправляются.</p><div class="tool-controls"><label class="schedule-field">Период<select id="preview-days"><option value="7">7 дней</option><option value="30">30 дней</option></select></label><button class="button secondary" type="button" data-action="filter-preview">Проверить фильтр</button></div><div id="filter-preview-result" aria-live="polite"></div></section>`;
