@@ -24,6 +24,7 @@ let navigationEpoch = 0;
 let authenticationEpoch = 0;
 let searchEpoch = 0;
 let notificationReadEpoch = 0;
+let unreadRevision = 0;
 let searchTimer;
 let searchController;
 let toastTimer;
@@ -806,6 +807,7 @@ async function readNotifications() {
   catch (error) { if (current()) throw error; return null; }
 }
 function updateUnread(count) {
+  unreadRevision++;
   if (state.bootstrap) state.bootstrap.unread_count = count;
   document.querySelectorAll('[data-unread]').forEach(badge => { badge.textContent = String(count || ''); badge.hidden = !count; });
 }
@@ -821,6 +823,7 @@ function updateNavigation() {
 
 async function syncBootstrap() {
   const owner = authenticationEpoch; const revision = collectionRevision; const libraryReadRevision = libraryRevision;
+  const unreadReadRevision = unreadRevision;
   const fresh = await api.bootstrap();
   if (owner !== authenticationEpoch) return state.bootstrap;
   if (revision !== collectionRevision && state.bootstrap) fresh.collections = state.bootstrap.collections;
@@ -829,6 +832,7 @@ async function syncBootstrap() {
   // additions, removals and preferences survive without hiding other games'
   // newly fetched data.
   preserveLibraryChanges(fresh, libraryReadRevision);
+  if (unreadReadRevision !== unreadRevision && state.bootstrap) fresh.unread_count = state.bootstrap.unread_count;
   state.bootstrap = fresh;
   reconcileCollections();
   steamSelection.reconcile(state.bootstrap.library);
@@ -1345,7 +1349,13 @@ document.addEventListener('click', async event => {
     if (owner !== authenticationEpoch || !state.bootstrap) return;
     // New notices can arrive after the server marked the existing ones read.
     // Read its current grouped snapshot instead of marking a newer UI list.
-    const result = await readNotifications();
+    const epoch = navigationEpoch;
+    let result;
+    try { result = await readNotifications(); }
+    catch (error) {
+      if (owner === authenticationEpoch && epoch === navigationEpoch && state.route.page === 'inbox') setMain(errorState(error.message));
+      throw error;
+    }
     if (!result || owner !== authenticationEpoch || !state.bootstrap) return;
     state.notifications = result; updateUnread(result.unread_count);
     if (state.route.page === 'inbox') { setMain(inboxPage(result, state.bootstrap.profile, state.config, state.bootstrap.delivery_status)); scheduleOverviewPoll(navigationEpoch); }
