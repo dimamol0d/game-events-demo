@@ -215,7 +215,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     prices: signal => request('/api/prices', { signal }),
     savePriceRegion: country => request('/api/prices/region', { method: 'POST', body: { country } }),
     addPriceGame: appId => request('/api/prices/items', { method: 'POST', body: { app_id: appId } }),
-    savePriceRule: (appId, rule) => request(`/api/prices/items/${appId}`, { method: 'PUT', body: { rule } }),
+    savePriceRule: (appId, rule, expectedRegion) => request(`/api/prices/items/${appId}`, { method: 'PUT', body: { rule, ...(expectedRegion ? { expected_region: expectedRegion } : {}) } }),
     removePriceGame: appId => request(`/api/prices/items/${appId}`, { method: 'DELETE', body: {} }),
     createCollection: name => request('/api/library/collections', { method: 'POST', body: { name } }),
     renameCollection: (id, name) => request(`/api/library/collections/${id}`, { method: 'POST', body: { name } }),

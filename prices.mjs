@@ -16,8 +16,11 @@ export function formatPrice(value, currency) {
   try { return new Intl.NumberFormat('ru-RU', { style: 'currency', currency }).format(value / 100); }
   catch { return `${priceInput(value) || '0.00'} ${currency}`; }
 }
-export function priceRule(draft, currency) {
+export function priceRule(draft, currency, { needsConfirmation = false } = {}) {
   if (!modes.has(draft.mode)) return { error: 'Выберите условие скидки.' };
+  // Disabling a paused old-currency rule does not confirm or reinterpret its
+  // amount. The server preserves that rule until a new amount is saved.
+  if (needsConfirmation && draft.enabled === false && draft.mode === 'price') return { rule: { enabled: false } };
   const result = { enabled: Boolean(draft.enabled), mode: draft.mode, percent: 50, price_minor: null, currency: null };
   if (draft.mode === 'percent') {
     const text = String(draft.percent ?? '').trim();
@@ -35,6 +38,13 @@ export function priceRule(draft, currency) {
 export function regionCurrency(snapshot) {
   return snapshot?.settings?.regions?.find(item => item.country === snapshot.settings.country)?.currency || '';
 }
+export function expectedPriceRegion(snapshot) {
+  const settings = snapshot?.settings;
+  const country = settings?.country; const version = settings?.region_version;
+  if (!/^[a-z]{2}$/.test(String(country || '')) || !settings?.regions?.some(region => region.country === country)
+    || typeof version !== 'string' || !version.trim()) return null;
+  return { country, version };
+}
 export function createPriceTools() {
   const state = { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), removeId: null };
   let generation = 0; let readEpoch = 0; let searchEpoch = 0; let readController; let searchController;
@@ -44,10 +54,13 @@ export function createPriceTools() {
   function accept(snapshot) {
     if (!snapshot?.settings || !Array.isArray(snapshot.items) || !Array.isArray(snapshot.settings.regions)) throw new Error('Сервер не подтвердил список скидок. Обновите его.');
     const previous = state.snapshot;
-    for (const [id] of state.drafts) {
+    const regionChanged = previous?.settings.country !== snapshot.settings.country
+      || previous?.settings.region_version !== snapshot.settings.region_version;
+    for (const [id, draft] of state.drafts) {
       const oldRule = previous?.items.find(value => Number(value.app_id) === id)?.rule;
       const newRule = snapshot.items.find(value => Number(value.app_id) === id)?.rule;
-      if (previous?.settings.country !== snapshot.settings.country || !newRule || JSON.stringify(oldRule) !== JSON.stringify(newRule)) state.drafts.delete(id);
+      const monetary = draft.mode === 'price' || oldRule?.mode === 'price' || newRule?.mode === 'price';
+      if (regionChanged && monetary || !newRule || JSON.stringify(oldRule) !== JSON.stringify(newRule)) state.drafts.delete(id);
     }
     state.snapshot = snapshot; state.loaded = true; state.country = snapshot.settings.country || ''; state.removeId = null;
   }

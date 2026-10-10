@@ -9,7 +9,7 @@ import { createBulkSelection, createToolRead, createRecapPager } from './library
 import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261010-prices1';
 import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261010-prices1';
 import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261010-prices1';
-import { createPriceTools, priceRule, regionCurrency } from './prices.mjs?v=20261010-prices1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261010-prices1';
 import { pricesPage, priceSearchResults } from './prices-views.mjs?v=20261010-prices1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
@@ -107,10 +107,13 @@ function rememberPriceDraft(form) {
 async function savePriceRule(form) {
   if (state.route.page !== 'prices' || priceTools().state.busy) return;
   const draft = rememberPriceDraft(form); if (!draft) return;
-  const parsed = priceRule(draft, regionCurrency(priceTools().state.snapshot));
-  if (parsed.error) { priceTools().state.error = parsed.error; drawPrices(); return; }
   const id = Number(form.dataset.priceApp);
-  await writePrices(() => api.savePriceRule(id, parsed.rule), 'Условие скидки сохранено.', id);
+  const parsed = priceRule(draft, regionCurrency(priceTools().state.snapshot), { needsConfirmation: priceTools().item(id)?.rule?.needs_confirmation === true });
+  if (parsed.error) { priceTools().state.error = parsed.error; drawPrices(); return; }
+  const monetary = parsed.rule.mode === 'price' || parsed.rule.price_minor != null || parsed.rule.currency != null;
+  const expected = monetary ? expectedPriceRegion(priceTools().state.snapshot) : null;
+  if (monetary && !expected) { priceTools().state.error = 'Обновите список скидок перед сохранением денежного предела.'; drawPrices(); return; }
+  await writePrices(() => api.savePriceRule(id, parsed.rule, expected), 'Условие скидки сохранено.', id);
 }
 
 function cancelDeliveryDiagnostics({ clear = false } = {}) {
@@ -393,6 +396,7 @@ async function saveBulkPreferences(form) {
   const reservation = reservePreferenceWrites(payload.app_ids);
   if (!reservation) { drawBulkChanges(); return; }
   const owner = authenticationEpoch;
+  const readRevision = libraryRevision;
   const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
   bulk.state.busy = true; bulk.state.error = ''; bulk.state.message = 'Сохраняем настройки выбранных игр…';
   invalidatePreview(); drawBulkChanges();
@@ -403,7 +407,7 @@ async function saveBulkPreferences(form) {
     const result = await api.bulkPreferences(payload);
     if (!current()) return;
     const selected = new Set(payload.app_ids);
-    const games = new Map((result.games || []).filter(game => selected.has(Number(game.app_id))).map(game => [Number(game.app_id), game]));
+    const games = new Map((result.games || []).filter(game => selected.has(Number(game.app_id))).map(game => [Number(game.app_id), preserveGamePreferences(game, readRevision)]));
     if (games.size !== selected.size) throw new Error('Сервер вернул неполный результат. Проверьте библиотеку; повтор сохраняет тот же выбор без дубликатов.');
     state.bootstrap.library = state.bootstrap.library.map(game => games.has(Number(game.app_id)) ? { ...game, preferences: games.get(Number(game.app_id)).preferences } : game);
     rememberLibraryChanges(payload.app_ids);
@@ -525,36 +529,43 @@ async function refreshSteam({ preview = true, autoOpen = false, forceLibrary = f
 
 async function connectSteam() {
   if (steam.busy) return;
+  const owner = authenticationEpoch;
+  const current = () => owner === authenticationEpoch;
   cancelSteamReads(); steam.busy = 'Готовим вход в Steam…'; steam.error = ''; steam.message = '';
   try {
     drawSteam();
     const result = await api.linkSteam();
+    if (!current()) return;
     const url = safeSteamLoginURL(result.url);
     if (!url) throw new Error('Сервер вернул неправильную ссылку входа. Повторите попытку.');
     steam.loginURL = url;
     steam.status = { ...(steam.status || {}), pending: { expires_at: result.expires_at } };
     steam.pollCount = 0;
     steam.message = 'Ссылка готова. Нажмите «Продолжить в Steam», подтвердите вход и вернитесь сюда.';
-  } catch (error) { steam.error = error.message; }
-  finally { steam.busy = ''; drawSteam(); scheduleSteamPoll(); }
+  } catch (error) { if (current()) steam.error = error.message; }
+  finally { if (current()) { steam.busy = ''; drawSteam(); scheduleSteamPoll(); } }
 }
 
 async function unlinkSteam() {
   if (steam.busy) return;
+  const owner = authenticationEpoch;
+  const current = () => owner === authenticationEpoch;
   cancelSteamReads(); steam.busy = 'Отвязываем Steam…'; steam.error = '';
   try {
     drawSteam();
     const result = await api.unlinkSteam();
+    if (!current()) return;
     steam.status = result; steam.loginURL = ''; steamSelection.clear(); steam.loaded = false;
     steam.message = 'Steam отвязан. Ваши игры и настройки в радаре сохранены.';
-  } catch (error) { steam.error = error.message; }
-  finally { steam.busy = ''; drawSteam(); }
+  } catch (error) { if (current()) steam.error = error.message; }
+  finally { if (current()) { steam.busy = ''; drawSteam(); } }
 }
 
 async function importSteamGames() {
   if (!state.bootstrap || steam.busy || transfer.busy) return;
   const owner = authenticationEpoch;
   const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
+  let batchRevision = libraryRevision;
   // Capacity may have changed since Steam was fetched or in another screen.
   steamSelection.reconcile(state.bootstrap.library);
   const games = steamSelection.selectedGames();
@@ -564,10 +575,11 @@ async function importSteamGames() {
     drawSteam();
     const result = await importLibraryBatches(games, payload => {
       if (!current()) throw new Error('Профиль приложения изменился. Откройте свою библиотеку и проверьте результат.');
+      batchRevision = libraryRevision;
       return api.importSteamLibrary(payload);
     }, progress => {
       if (!current()) return;
-      rememberImportedGames(progress);
+      rememberImportedGames(progress, batchRevision);
       for (const game of progress.batch) steamSelection.state.selected.delete(game.app_id);
       steamSelection.markSkipped(progress.result.skipped || []);
       steam.message = `Обработано ${progress.completed} из ${games.length}. Добавлено: ${progress.added}. Уже отслеживаются: ${progress.alreadyTracking}. Пропущено: ${progress.skipped.length}.`;
@@ -591,13 +603,16 @@ async function importSteamGames() {
   }
 }
 
-function rememberImportedGames(progress) {
+function rememberImportedGames(progress, readRevision = libraryRevision) {
   const confirmed = new Set(progress.batch.map(game => game.app_id));
   const library = new Map(state.bootstrap.library.map(game => [Number(game.app_id), game]));
-  // Use server summaries, never client names or invented preferences. This
-  // also keeps confirmed rows disabled if the final bootstrap read fails.
+  // Keep server metadata, but preserve confirmed local writes made while
+  // this batch was in flight, including removals and personal preferences.
   for (const game of progress.result.games || []) {
-    if (confirmed.has(game.app_id)) library.set(game.app_id, game);
+    const appId = Number(game.app_id);
+    if (!confirmed.has(appId)) continue;
+    if ((libraryChanges.get(appId) || 0) > readRevision && !library.has(appId)) continue;
+    library.set(appId, preserveGamePreferences(game, readRevision));
   }
   state.bootstrap.library = [...library.values()];
   rememberLibraryChanges((progress.result.games || []).filter(game => confirmed.has(game.app_id)).map(game => game.app_id));
@@ -680,6 +695,7 @@ async function importTransfer() {
   if (!state.bootstrap || transfer.busy || steam.busy) return;
   const owner = authenticationEpoch;
   const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
+  let batchRevision = libraryRevision;
   const games = selectedTransferGames();
   if (!games.length) return;
   const existing = new Set(state.bootstrap.library.map(game => Number(game.app_id)));
@@ -691,10 +707,11 @@ async function importTransfer() {
     drawTransfer();
     const result = await importLibraryBatches(games, payload => {
       if (!current()) throw new Error('Профиль приложения изменился. Проверьте свою библиотеку перед повтором.');
+      batchRevision = libraryRevision;
       return api.importLibrary(payload);
     }, progress => {
       if (!current()) return;
-      rememberImportedGames(progress);
+      rememberImportedGames(progress, batchRevision);
       const confirmed = new Set(progress.batch.map(game => game.app_id));
       transfer.entries = transfer.entries.filter(game => !confirmed.has(game.app_id));
       for (const appId of confirmed) transfer.selected.delete(appId);
@@ -1065,12 +1082,14 @@ function renderAfterLibraryChange() {
 }
 
 async function mutateButton(button, key, task) {
+  const owner = authenticationEpoch;
+  key = `${owner}:${key}`;
   if (mutations.has(key)) return;
   mutations.add(key);
   button.disabled = true;
   button.setAttribute('aria-busy', 'true');
   try { await task(); }
-  catch (error) { toast(error.message); }
+  catch (error) { if (owner === authenticationEpoch) toast(error.message); }
   finally { mutations.delete(key); if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); } }
 }
 
@@ -1162,9 +1181,13 @@ document.addEventListener('click', async event => {
     toast(queued ? 'Русский перевод готовится. Пока доступен оригинал.' : ready ? 'Русский перевод готов.' : 'Перевод сейчас недоступен или уже готовится. Можно читать оригинал.');
   });
   else if (action === 'delivery') await mutateButton(button, 'delivery', async () => {
+    const owner = authenticationEpoch;
+    const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
     const enabled = button.dataset.enabled === 'true';
     await api.setTelegramDelivery(enabled);
+    if (!current()) return;
     await syncBootstrap();
+    if (!current()) return;
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
     if (state.route.page === 'library') setMain(currentLibraryPage());
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
@@ -1172,8 +1195,12 @@ document.addEventListener('click', async event => {
     toast(enabled ? 'Уведомления в Telegram включены.' : 'Уведомления в Telegram выключены.');
   });
   else if (action === 'delivery-test') await mutateButton(button, 'delivery-test', async () => {
+    const owner = authenticationEpoch;
+    const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
     const result = await api.testTelegramDelivery();
+    if (!current()) return;
     await syncBootstrap();
+    if (!current()) return;
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
     if (state.route.page === 'library') setMain(currentLibraryPage());
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
@@ -1181,12 +1208,17 @@ document.addEventListener('click', async event => {
     toast(result.message || 'Проверка доставки запрошена. Посмотрите чат с ботом.');
   });
   else if (action === 'write-access') await mutateButton(button, 'delivery', async () => {
+    const owner = authenticationEpoch;
+    const current = () => owner === authenticationEpoch && Boolean(state.bootstrap);
     const allowed = await telegram.requestWriteAccess();
+    if (!current()) return;
     if (!allowed) { toast('Уведомления не включены. Можно открыть бота и нажать «Начать», затем снова открыть приложение.'); return; }
     // initData can stay unchanged after Telegram grants access. The server
     // confirms permission with Bot API for this authenticated profile.
     await api.setTelegramDelivery(true);
+    if (!current()) return;
     await syncBootstrap();
+    if (!current()) return;
     toast('Уведомления в Telegram включены.');
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
     if (state.route.page === 'library') setMain(currentLibraryPage());
@@ -1205,7 +1237,9 @@ document.addEventListener('click', async event => {
     if (state.route.page === 'game') scheduleGamePoll(navigationEpoch);
   });
   else if (action === 'refresh') await mutateButton(button, 'refresh-' + appId, async () => {
+    const owner = authenticationEpoch;
     const result = await api.refresh(appId);
+    if (owner !== authenticationEpoch || !state.bootstrap) return;
     toast(result.message || (result.queued ? 'Игра отправлена на проверку. Данные появятся после получения ответа источников.' : 'Игра недавно проверялась. Попробуйте позже.'));
     if (result.queued && state.game?.game.app_id === appId && state.route.page === 'game') {
       state.game.game.poll_status = 'awaiting';
@@ -1247,7 +1281,9 @@ document.addEventListener('click', async event => {
     }
   });
   else if (action === 'read') await mutateButton(button, 'read', async () => {
+    const owner = authenticationEpoch;
     await api.markRead();
+    if (owner !== authenticationEpoch || !state.bootstrap) return;
     updateUnread(0);
     if (state.notifications) state.notifications = { ...state.notifications, unread_count: 0, items: state.notifications.items.map(item => ({ ...item, read: true })) };
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
@@ -1429,22 +1465,26 @@ document.addEventListener('submit', async event => {
   if (event.target.id === 'delivery-schedule-form') {
     event.preventDefault();
     const form = event.target;
+    const owner = authenticationEpoch;
+    const currentOwner = () => owner === authenticationEpoch && Boolean(state.bootstrap);
     const message = form.querySelector('#schedule-message');
     const schedule = { mode: form.elements.mode.value, utc_offset_minutes: Number(form.elements.utc_offset_minutes.value), quiet_enabled: form.elements.quiet_enabled.checked,
       ...(form.elements.mode.value === 'digest' ? { daily_time: form.elements.daily_time.value } : {}),
       ...(form.elements.quiet_enabled.checked ? { quiet_start: form.elements.quiet_start.value, quiet_end: form.elements.quiet_end.value } : {}) };
-    await mutateButton(form.querySelector('[type="submit"]'), 'delivery-schedule', async () => {
+    await mutateButton(form.querySelector('[type="submit"]'), `delivery-schedule-${owner}`, async () => {
       message.textContent = 'Сохраняем…';
       const controls = Array.from(form.querySelectorAll('input,select'));
       const disabled = controls.map(control => control.disabled);
       controls.forEach(control => { control.disabled = true; });
       try {
         const result = await api.saveDeliverySchedule(schedule);
+        if (!currentOwner()) return;
         state.bootstrap.delivery_status = result.delivery_status;
-        form.closest('details').querySelector('.schedule-caption').textContent = result.schedule.mode === 'digest' ? `Сводка в ${result.schedule.daily_time}` : 'Сразу после обнаружения';
+        const caption = form.closest('details')?.querySelector('.schedule-caption');
+        if (caption) caption.textContent = result.schedule.mode === 'digest' ? `Сводка в ${result.schedule.daily_time}` : 'Сразу после обнаружения';
         message.textContent = 'Расписание сохранено.';
         toast('Расписание сохранено. Фильтры игр продолжают действовать.');
-      } catch (error) { message.textContent = 'Не сохранено. ' + error.message; throw error; }
+      } catch (error) { if (currentOwner()) { message.textContent = 'Не сохранено. ' + error.message; throw error; } }
       finally { controls.forEach((control, index) => { control.disabled = disabled[index]; }); }
     });
     return;
@@ -1457,14 +1497,16 @@ document.addEventListener('submit', async event => {
   const message = form.querySelector('#preferences-message');
   const prefs = readPreferences(form);
   const owner = authenticationEpoch;
+  const readRevision = libraryRevision;
   const reservation = reservePreferenceWrites([appId]);
   if (!reservation) { message.textContent = PREFERENCE_WAIT_MESSAGE; button.disabled = true; return; }
   try {
     await mutateButton(button, `prefs-${owner}-${appId}`, async () => {
       message.textContent = 'Сохраняем…';
       try {
-        const result = await api.savePreferences(appId, prefs);
+        let result = await api.savePreferences(appId, prefs);
         if (owner !== authenticationEpoch || !state.bootstrap) return;
+        result = preserveGamePreferences({ ...result, app_id: appId }, readRevision);
         state.bootstrap.library = state.bootstrap.library.map(game => game.app_id === appId ? { ...game, preferences: result.preferences } : game);
         rememberLibraryChanges([appId]);
         if (state.game?.game.app_id === appId) state.game.game.preferences = result.preferences;
