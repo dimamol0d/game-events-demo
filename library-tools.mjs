@@ -1,4 +1,4 @@
-import { DEFAULT_PREFS, preferencesForMode } from './model.mjs?v=20261010-prices1';
+import { DEFAULT_PREFS, preferencesForMode } from './model.mjs?v=20261010-audit1';
 
 export const BULK_LIMIT = 100;
 export const PREFERENCE_LABELS = Object.freeze({ enabled: 'Уведомления', mode: 'Режим', patches: 'Обновления', news: 'Новости', builds: 'Сборки', include_unknown: 'Неизвестная важность', timing: 'Когда присылать', translation_mode: 'Язык' });

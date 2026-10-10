@@ -1,5 +1,5 @@
-import { escapeHTML as h, formatDate } from './model.mjs?v=20261010-prices1';
-import { formatPrice, regionCurrency, PRICE_LIST_LIMIT } from './prices.mjs?v=20261010-prices1';
+import { escapeHTML as h, formatDate } from './model.mjs?v=20261010-audit1';
+import { formatPrice, regionCurrency, PRICE_LIST_LIMIT } from './prices.mjs?v=20261010-audit1';
 
 const status = state => `<p id="prices-message" class="transfer-message" role="status" aria-live="polite">${h(state.error || state.message || (state.loading ? 'Обновляем список цен…' : ''))}</p>`;
 const unavailable = { awaiting: 'Ждём первую проверку цены', unavailable: 'Цена недоступна в этом регионе', error: 'Не удалось обновить цену', free: 'Бесплатно', unknown: 'Цена пока неизвестна' };

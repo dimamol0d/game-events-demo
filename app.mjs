@@ -1,16 +1,16 @@
-import { api, ApiError } from './api.mjs?v=20261010-prices1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261010-prices1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261010-prices1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261010-prices1';
-import { loadRuntimeConfig } from './config.mjs?v=20261010-prices1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261010-prices1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261010-prices1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261010-prices1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261010-prices1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261010-prices1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261010-prices1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261010-prices1';
-import { pricesPage, priceSearchResults } from './prices-views.mjs?v=20261010-prices1';
+import { api, ApiError } from './api.mjs?v=20261010-audit1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261010-audit1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261010-audit1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261010-audit1';
+import { loadRuntimeConfig } from './config.mjs?v=20261010-audit1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261010-audit1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261010-audit1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261010-audit1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261010-audit1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261010-audit1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261010-audit1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261010-audit1';
+import { pricesPage, priceSearchResults } from './prices-views.mjs?v=20261010-audit1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -30,6 +30,7 @@ let gamePollTimer;
 let overviewPollTimer;
 let bootstrapUpdatedAt = 0;
 let libraryRevision = 0;
+const libraryMembershipChanges = new Map();
 const libraryChanges = new Map();
 const mutations = new Set();
 // A delayed bulk response must never overwrite a later individual save (or
@@ -183,10 +184,13 @@ function reconcileCollections() {
   collections.reconcile(state.bootstrap.library, state.bootstrap.collections || []);
   state.bootstrap.collections = collections.collections;
 }
-function rememberLibraryChanges(appIds) {
+function rememberLibraryChanges(appIds, { membership = false } = {}) {
   if (!appIds.length) return;
   const revision = ++libraryRevision;
-  for (const appId of appIds) libraryChanges.set(Number(appId), revision);
+  for (const appId of appIds) {
+    libraryChanges.set(Number(appId), revision);
+    if (membership) libraryMembershipChanges.set(Number(appId), revision);
+  }
 }
 function preserveLibraryChanges(fresh, revision) {
   if (!state.bootstrap || revision === libraryRevision) return;
@@ -407,7 +411,7 @@ async function saveBulkPreferences(form) {
     const result = await api.bulkPreferences(payload);
     if (!current()) return;
     const selected = new Set(payload.app_ids);
-    const games = new Map((result.games || []).filter(game => selected.has(Number(game.app_id))).map(game => [Number(game.app_id), preserveGamePreferences(game, readRevision)]));
+    const games = new Map((result.games || []).filter(game => selected.has(Number(game.app_id))).map(game => [Number(game.app_id), preservePreferenceWrite(game, readRevision)]));
     if (games.size !== selected.size) throw new Error('Сервер вернул неполный результат. Проверьте библиотеку; повтор сохраняет тот же выбор без дубликатов.');
     state.bootstrap.library = state.bootstrap.library.map(game => games.has(Number(game.app_id)) ? { ...game, preferences: games.get(Number(game.app_id)).preferences } : game);
     rememberLibraryChanges(payload.app_ids);
@@ -606,16 +610,19 @@ async function importSteamGames() {
 function rememberImportedGames(progress, readRevision = libraryRevision) {
   const confirmed = new Set(progress.batch.map(game => game.app_id));
   const library = new Map(state.bootstrap.library.map(game => [Number(game.app_id), game]));
+  const added = [];
   // Keep server metadata, but preserve confirmed local writes made while
   // this batch was in flight, including removals and personal preferences.
   for (const game of progress.result.games || []) {
     const appId = Number(game.app_id);
     if (!confirmed.has(appId)) continue;
     if ((libraryChanges.get(appId) || 0) > readRevision && !library.has(appId)) continue;
+    if (!library.has(appId)) added.push(appId);
     library.set(appId, preserveGamePreferences(game, readRevision));
   }
   state.bootstrap.library = [...library.values()];
   rememberLibraryChanges((progress.result.games || []).filter(game => confirmed.has(game.app_id)).map(game => game.app_id));
+  rememberLibraryChanges(added, { membership: true });
 }
 
 function restoreLibraryImportUI() {
@@ -804,6 +811,14 @@ function preserveGamePreferences(game, readRevision) {
   // A game/history read may predate a confirmed settings or membership write.
   // Keep its new source/history fields, but use the current tracking rules.
   const tracked = state.bootstrap.library.find(item => Number(item.app_id) === appId);
+  return { ...game, preferences: tracked?.preferences ?? null };
+}
+function preservePreferenceWrite(game, readRevision) {
+  // Metadata-only import responses do not invalidate an in-flight settings
+  // write. A remove/add creates a new subscription and must keep its rules.
+  const appId = Number(game.app_id);
+  if ((libraryMembershipChanges.get(appId) || 0) <= readRevision) return game;
+  const tracked = state.bootstrap?.library.find(item => Number(item.app_id) === appId);
   return { ...game, preferences: tracked?.preferences ?? null };
 }
 function updateGameSummary(game, readRevision) {
@@ -1227,10 +1242,15 @@ document.addEventListener('click', async event => {
   });
   else if (action === 'add') await mutateButton(button, 'add-' + appId, async () => {
     const owner = authenticationEpoch;
+    const readRevision = libraryRevision;
     const result = await api.add(appId);
     if (owner !== authenticationEpoch || !state.bootstrap) return;
-    if (!state.bootstrap.library.some(game => game.app_id === appId)) state.bootstrap.library.push(result.game);
-    rememberLibraryChanges([appId]);
+    if ((libraryMembershipChanges.get(appId) || 0) > readRevision
+      && !state.bootstrap.library.some(game => game.app_id === appId)) return;
+    result.game = preserveGamePreferences(result.game, readRevision);
+    const added = !state.bootstrap.library.some(game => game.app_id === appId);
+    if (added) state.bootstrap.library.push(result.game);
+    rememberLibraryChanges([appId], { membership: added });
     if (state.game?.game.app_id === appId) state.game.game = result.game;
     renderAfterLibraryChange();
     toast(result.game.name + ' — добавлено в библиотеку.');
@@ -1249,11 +1269,13 @@ document.addEventListener('click', async event => {
   });
   else if (action === 'remove') await mutateButton(button, 'remove-' + appId, async () => {
     const owner = authenticationEpoch; const epoch = navigationEpoch;
+    const readRevision = libraryRevision;
     await api.remove(appId);
     if (owner !== authenticationEpoch || !state.bootstrap) return;
+    if ((libraryMembershipChanges.get(appId) || 0) > readRevision) return;
     if (state.route.page === 'game' && state.route.appId === appId) clearTimeout(gamePollTimer);
     state.bootstrap.library = state.bootstrap.library.filter(game => Number(game.app_id) !== appId);
-    rememberLibraryChanges([appId]);
+    rememberLibraryChanges([appId], { membership: true });
     reconcileCollections();
     bulk.reconcile(state.bootstrap.library);
     if (state.game?.game.app_id === appId) state.game.game.preferences = null;
@@ -1506,7 +1528,7 @@ document.addEventListener('submit', async event => {
       try {
         let result = await api.savePreferences(appId, prefs);
         if (owner !== authenticationEpoch || !state.bootstrap) return;
-        result = preserveGamePreferences({ ...result, app_id: appId }, readRevision);
+        result = preservePreferenceWrite({ ...result, app_id: appId }, readRevision);
         state.bootstrap.library = state.bootstrap.library.map(game => game.app_id === appId ? { ...game, preferences: result.preferences } : game);
         rememberLibraryChanges([appId]);
         if (state.game?.game.app_id === appId) state.game.game.preferences = result.preferences;
@@ -1550,7 +1572,7 @@ async function start() {
   cancelDeliveryDiagnostics({ clear: true });
   cancelCollectionReads(); collectionRevision++; collections.clear();
   preferenceWrites.clear();
-  libraryChanges.clear(); libraryRevision++;
+  libraryChanges.clear(); libraryMembershipChanges.clear(); libraryRevision++;
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
   searchController?.abort();
