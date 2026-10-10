@@ -1,14 +1,16 @@
-import { api, ApiError } from './api.mjs?v=20261010-diagnostics1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261010-diagnostics1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261010-diagnostics1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261010-diagnostics1';
-import { loadRuntimeConfig } from './config.mjs?v=20261010-diagnostics1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261010-diagnostics1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261010-diagnostics1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261010-diagnostics1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261010-diagnostics1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261010-diagnostics1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261010-diagnostics1';
+import { api, ApiError } from './api.mjs?v=20261010-prices1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261010-prices1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261010-prices1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261010-prices1';
+import { loadRuntimeConfig } from './config.mjs?v=20261010-prices1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261010-prices1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261010-prices1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261010-prices1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261010-prices1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261010-prices1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261010-prices1';
+import { createPriceTools, priceRule, regionCurrency } from './prices.mjs?v=20261010-prices1';
+import { pricesPage, priceSearchResults } from './prices-views.mjs?v=20261010-prices1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -56,6 +58,60 @@ const collections = createCollectionTools();
 let collectionReadEpoch = 0;
 let collectionReadController;
 let collectionRevision = 0;
+let prices = null;
+let priceSearchTimer;
+
+function priceTools() { return prices ||= createPriceTools(); }
+function drawPrices({ focus = false } = {}) {
+  if (state.bootstrap && state.route.page === 'prices') setMain(pricesPage(priceTools()), focus);
+}
+function drawPriceSearch() {
+  if (!state.bootstrap || state.route.page !== 'prices') return;
+  const region = document.querySelector('#price-search-results');
+  if (region) region.innerHTML = priceSearchResults(priceTools());
+}
+function priceContext() {
+  const owner = authenticationEpoch; const epoch = navigationEpoch;
+  return () => owner === authenticationEpoch && epoch === navigationEpoch && state.route.page === 'prices' && Boolean(state.bootstrap);
+}
+async function refreshPrices() {
+  if (!state.bootstrap || state.route.page !== 'prices') return;
+  await priceTools().load(signal => api.prices(signal), priceContext(), drawPrices);
+}
+async function searchPrices() {
+  clearTimeout(priceSearchTimer);
+  if (!state.bootstrap || state.route.page !== 'prices' || priceTools().state.busy || !priceTools().state.snapshot?.settings.country) return;
+  await priceTools().search((query, kind, signal) => api.search(query, kind, signal), priceContext(), drawPriceSearch);
+}
+async function writePrices(task, message, clearDraftId = null) {
+  if (!state.bootstrap || state.route.page !== 'prices') return;
+  const owner = authenticationEpoch; const epoch = navigationEpoch;
+  const saved = await priceTools().write(task, priceContext(), drawPrices, message);
+  if (saved) { if (clearDraftId !== null) { priceTools().state.drafts.delete(Number(clearDraftId)); drawPrices(); } toast(message); }
+  // Returning while a write is still pending must not leave disabled controls
+  // on screen. Read the current owner afresh rather than accepting its stale
+  // response from the abandoned navigation.
+  if (owner === authenticationEpoch && epoch !== navigationEpoch && state.route.page === 'prices') await refreshPrices();
+}
+function rememberPriceDraft(form) {
+  const tools = priceTools(); const id = Number(form.dataset.priceApp);
+  if (!tools.item(id)) return null;
+  const draft = tools.draft(id);
+  Object.assign(draft, { enabled: form.elements.enabled.checked, mode: form.elements.mode.value, percent: form.elements.percent.value, price: form.elements.price.value, dirty: true });
+  form.querySelector('.price-percent-field').hidden = draft.mode !== 'percent';
+  form.querySelector('.price-limit-field').hidden = draft.mode !== 'price';
+  form.elements.percent.disabled = draft.mode !== 'percent'; form.elements.price.disabled = draft.mode !== 'price';
+  form.querySelector('.price-draft-note').textContent = 'Есть несохранённые изменения.';
+  return draft;
+}
+async function savePriceRule(form) {
+  if (state.route.page !== 'prices' || priceTools().state.busy) return;
+  const draft = rememberPriceDraft(form); if (!draft) return;
+  const parsed = priceRule(draft, regionCurrency(priceTools().state.snapshot));
+  if (parsed.error) { priceTools().state.error = parsed.error; drawPrices(); return; }
+  const id = Number(form.dataset.priceApp);
+  await writePrices(() => api.savePriceRule(id, parsed.rule), 'Условие скидки сохранено.', id);
+}
 
 function cancelDeliveryDiagnostics({ clear = false } = {}) {
   for (const diagnostic of deliveryDiagnostics.values()) {
@@ -699,13 +755,13 @@ function updateUnread(count) {
   document.querySelectorAll('[data-unread]').forEach(badge => { badge.textContent = String(count || ''); badge.hidden = !count; });
 }
 function updateNavigation() {
-  const active = ['game', 'settings', 'feed', 'bulk', 'recap', 'collections', 'collection', 'game-lists'].includes(state.route.page) ? 'library' : state.route.page;
+  const active = ['game', 'settings', 'feed', 'bulk', 'recap', 'collections', 'collection', 'game-lists', 'prices'].includes(state.route.page) ? 'library' : state.route.page;
   document.querySelectorAll('.nav-item').forEach(link => {
     const current = link.hash === '#' + active;
     link.classList.toggle('active', current);
     if (current) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current');
   });
-  telegram.updateBack(['game', 'settings', 'feed', 'profile', 'bulk', 'recap', 'collections', 'collection', 'game-lists'].includes(state.route.page) ? () => { location.hash = ['settings', 'game-lists'].includes(state.route.page) ? `#game/${state.route.appId}` : state.route.page === 'collection' ? '#collections' : '#library'; } : null);
+  telegram.updateBack(['game', 'settings', 'feed', 'profile', 'bulk', 'recap', 'collections', 'collection', 'game-lists', 'prices'].includes(state.route.page) ? () => { location.hash = ['settings', 'game-lists'].includes(state.route.page) ? `#game/${state.route.appId}` : state.route.page === 'collection' ? '#collections' : '#library'; } : null);
 }
 
 async function syncBootstrap() {
@@ -848,12 +904,13 @@ async function loadRoute({ focus = true, force = false } = {}) {
   recap.cancel();
   cancelCollectionReads();
   cancelSteamReads();
+  prices?.cancel(); clearTimeout(priceSearchTimer);
   const previous = state.route;
   state.route = parseRoute(location.hash);
   const route = state.route;
   const epoch = ++navigationEpoch;
   updateNavigation();
-  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления', profile: 'Мой профиль', bulk: 'Массовые настройки', recap: 'Пока вы не играли', collections: 'Мои списки', collection: 'Список игр', 'game-lists': 'Списки игры' }[route.page] || 'Главная') + ' — Игровой радар';
+  document.title = ({ home: 'Главная', search: 'Поиск игр', library: 'Библиотека', inbox: 'Уведомления', game: 'Игра', settings: 'Настройки', feed: 'Мои обновления', profile: 'Мой профиль', bulk: 'Массовые настройки', recap: 'Пока вы не играли', collections: 'Мои списки', collection: 'Список игр', 'game-lists': 'Списки игры', prices: 'Скидки · Хочу купить' }[route.page] || 'Главная') + ' — Игровой радар';
   if (previous.page !== route.page || previous.appId !== route.appId || previous.collectionId !== route.collectionId) window.scrollTo({ top: 0, behavior: 'instant' });
   if (route.page === 'home') {
     setMain(homePage(state.bootstrap, state.config), focus);
@@ -866,8 +923,13 @@ async function loadRoute({ focus = true, force = false } = {}) {
     return;
   }
   if (route.page === 'profile') {
-    setMain(profilePage(state.bootstrap.profile), focus);
+    setMain(profilePage(state.bootstrap.profile, state.config, state.bootstrap.delivery_status), focus);
     await refreshSteam({ preview: false });
+    return;
+  }
+  if (route.page === 'prices') {
+    drawPrices({ focus });
+    await refreshPrices();
     return;
   }
   if (route.page === 'search') {
@@ -1018,6 +1080,22 @@ document.addEventListener('click', async event => {
   if (!button) return;
   const action = button.dataset.action;
   const appId = Number(button.dataset.appId);
+  if (action.startsWith('price')) {
+    if (state.route.page !== 'prices' || !state.bootstrap) return;
+    const tools = priceTools();
+    if (tools.state.busy || tools.state.loading) return;
+    if (action === 'prices-refresh') await refreshPrices();
+    if (action === 'price-search-retry') await searchPrices();
+    if (action === 'price-add' && Number.isSafeInteger(appId) && appId > 0) {
+      if (tools.item(appId)) return;
+      if ((tools.state.snapshot?.items.length || 0) >= (tools.state.snapshot?.limit || 30)) { toast('Можно сохранить до 30 игр и DLC. Уберите одну из списка.'); return; }
+      await writePrices(() => api.addPriceGame(appId), 'Добавлено в «Хочу купить».');
+    }
+    if (action === 'price-remove-request' && tools.item(appId)) { tools.state.removeId = appId; drawPrices(); }
+    if (action === 'price-remove-cancel') { tools.state.removeId = null; drawPrices(); }
+    if (action === 'price-remove-confirm' && tools.state.removeId === appId && tools.item(appId)) await writePrices(() => api.removePriceGame(appId), 'Убрано из «Хочу купить».');
+    return;
+  }
   if (action === 'delivery-diagnostic' || action === 'delivery-diagnostic-retry') { await showDeliveryDiagnostic(button, { retry: action === 'delivery-diagnostic-retry' }); return; }
   if (action === 'steam-callback-retry') { await verifySteamCallback(); return; }
   if (action.startsWith('collection')) { await handleCollectionAction(action, button); return; }
@@ -1090,6 +1168,7 @@ document.addEventListener('click', async event => {
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
     if (state.route.page === 'library') setMain(currentLibraryPage());
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'profile') { setMain(profilePage(state.bootstrap.profile, state.config, state.bootstrap.delivery_status)); drawSteam(); }
     toast(enabled ? 'Уведомления в Telegram включены.' : 'Уведомления в Telegram выключены.');
   });
   else if (action === 'delivery-test') await mutateButton(button, 'delivery-test', async () => {
@@ -1098,6 +1177,7 @@ document.addEventListener('click', async event => {
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
     if (state.route.page === 'library') setMain(currentLibraryPage());
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'profile') { setMain(profilePage(state.bootstrap.profile, state.config, state.bootstrap.delivery_status)); drawSteam(); }
     toast(result.message || 'Проверка доставки запрошена. Посмотрите чат с ботом.');
   });
   else if (action === 'write-access') await mutateButton(button, 'delivery', async () => {
@@ -1111,6 +1191,7 @@ document.addEventListener('click', async event => {
     if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
     if (state.route.page === 'library') setMain(currentLibraryPage());
     if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    if (state.route.page === 'profile') { setMain(profilePage(state.bootstrap.profile, state.config, state.bootstrap.delivery_status)); drawSteam(); }
   });
   else if (action === 'add') await mutateButton(button, 'add-' + appId, async () => {
     const owner = authenticationEpoch;
@@ -1175,6 +1256,15 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  if (state.route.page === 'prices') {
+    const tools = priceTools();
+    if (event.target.id === 'price-search-input' && !tools.state.busy && !tools.state.loading) {
+      tools.state.query = event.target.value; tools.state.searchResult = null; tools.cancelSearch();
+      drawPriceSearch(); clearTimeout(priceSearchTimer); priceSearchTimer = setTimeout(searchPrices, 420); return;
+    }
+    const form = event.target.closest('.price-rule-form');
+    if (form && !tools.state.busy && !tools.state.loading) { rememberPriceDraft(form); return; }
+  }
   if (event.target.id === 'library-game-search' && state.route.page === 'library') { collections.state.libraryQuery = event.target.value; drawLibraryCollections(); return; }
   if (event.target.id === 'collection-game-search' && state.route.page === 'collection' && !collections.state.busy) { collections.state.query = event.target.value; drawCollectionSelection(); return; }
   if (event.target.id === 'collection-new-name' && state.route.page === 'collections') { collections.state.createName = event.target.value; return; }
@@ -1207,6 +1297,14 @@ function syncPreferenceNotes(form) {
 }
 
 document.addEventListener('change', async event => {
+  if (state.route.page === 'prices') {
+    const tools = priceTools();
+    if (tools.state.busy || tools.state.loading) return;
+    const form = event.target.closest('.price-rule-form');
+    if (form) { rememberPriceDraft(form); return; }
+    if (event.target.closest('#price-region-form')) { tools.state.country = event.target.value; return; }
+    if (event.target.name === 'kind' && event.target.closest('#price-search-form')) { tools.state.kind = event.target.value; await searchPrices(); return; }
+  }
   if (event.target.dataset.collectionGame && state.route.page === 'collection') {
     if (collections.state.busy || collections.state.loading) return;
     collections.toggle(Number(event.target.dataset.collectionGame), event.target.checked); drawCollectionSelection(); return;
@@ -1303,6 +1401,17 @@ function readPreferences(form) {
 }
 
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'price-region-form') {
+    event.preventDefault();
+    if (state.route.page !== 'prices' || !state.bootstrap || priceTools().state.busy || priceTools().state.loading) return;
+    const country = event.target.elements.country.value; const tools = priceTools();
+    if (!tools.state.snapshot?.settings.regions.some(region => region.country === country)) { tools.state.error = 'Выберите один из доступных регионов Steam.'; drawPrices(); return; }
+    const changeAt = Date.parse(tools.state.snapshot.settings.change_available_at || '');
+    if (Number.isFinite(changeAt) && changeAt > Date.now()) { tools.state.error = 'Регион только что изменён. Подождите немного и обновите список.'; drawPrices(); return; }
+    await writePrices(() => api.savePriceRegion(country), 'Регион магазина сохранён.'); return;
+  }
+  if (event.target.id === 'price-search-form') { event.preventDefault(); if (state.route.page === 'prices') { priceTools().state.query = event.target.elements.q.value; priceTools().state.kind = event.target.elements.kind.value; await searchPrices(); } return; }
+  if (event.target.classList?.contains?.('price-rule-form')) { event.preventDefault(); await savePriceRule(event.target); return; }
   if (event.target.id === 'collection-create-form') { event.preventDefault(); await createCollection(event.target); return; }
   if (event.target.id === 'collection-rename-form') { event.preventDefault(); await renameCollection(event.target); return; }
   if (event.target.id === 'game-collections-form') { event.preventDefault(); await saveGameCollections(event.target); return; }
@@ -1371,7 +1480,7 @@ document.addEventListener('submit', async event => {
 window.addEventListener('hashchange', () => {
   if (state.bootstrap) loadRoute();
 });
-window.addEventListener('pagehide', () => { cancelDeliveryDiagnostics({ clear: true }); feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelCollectionReads(); cancelSteamReads(); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pagehide', () => { cancelDeliveryDiagnostics({ clear: true }); feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelCollectionReads(); cancelSteamReads(); prices?.cancel(); clearTimeout(priceSearchTimer); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   telegram.init();
@@ -1383,10 +1492,11 @@ window.addEventListener('focus', () => {
 });
 document.addEventListener('visibilitychange', () => {
   if (!state.bootstrap) return;
-  if (document.hidden) { cancelDeliveryDiagnostics(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); }
+  if (document.hidden) { cancelDeliveryDiagnostics(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); prices?.cancel(); clearTimeout(priceSearchTimer); }
   else {
     drawDeliveryDiagnostics();
     if (['collections', 'collection', 'game-lists'].includes(state.route.page)) drawCollections();
+    if (state.route.page === 'prices') drawPrices();
     scheduleGamePoll(navigationEpoch); scheduleOverviewPoll(navigationEpoch);
     if (['library', 'profile'].includes(state.route.page) && (steam.open || state.route.page === 'profile')) refreshSteam({ preview: true });
   }
@@ -1394,6 +1504,7 @@ document.addEventListener('visibilitychange', () => {
 
 async function start() {
   authenticationEpoch++;
+  prices?.clear(); clearTimeout(priceSearchTimer);
   cancelDeliveryDiagnostics({ clear: true });
   cancelCollectionReads(); collectionRevision++; collections.clear();
   preferenceWrites.clear();

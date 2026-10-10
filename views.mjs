@@ -1,6 +1,6 @@
-import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, eventUnderstanding, eventMatchesId, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, modesForPreferences, MODES, DEFAULT_PREFS, TRANSLATION_MODES } from './model.mjs?v=20261010-diagnostics1';
-import { libraryCollectionFilters } from './collections-views.mjs?v=20261010-diagnostics1';
-import { collectionGames } from './collections.mjs?v=20261010-diagnostics1';
+import { escapeHTML as h, safeURL, safeImageURL, eventRoute, eventLabel, eventUnderstanding, eventMatchesId, excerpt, formatDate, coverageText, latestPublications, sourceLabel, publicationLanguage, modesForPreferences, MODES, DEFAULT_PREFS, TRANSLATION_MODES } from './model.mjs?v=20261010-prices1';
+import { libraryCollectionFilters } from './collections-views.mjs?v=20261010-prices1';
+import { collectionGames } from './collections.mjs?v=20261010-prices1';
 
 const paths = {
   home: '<path d="m3 11 9-8 9 8M5 10v11h5v-7h4v7h5V10"/>',
@@ -31,7 +31,7 @@ function applicationLabel(game, detail = false) {
 }
 
 export function shell(route, bootstrap) {
-  const active = ['game', 'settings', 'feed', 'bulk', 'recap', 'collections', 'collection', 'game-lists'].includes(route.page) ? 'library' : route.page;
+  const active = ['game', 'settings', 'feed', 'bulk', 'recap', 'collections', 'collection', 'game-lists', 'prices'].includes(route.page) ? 'library' : route.page;
   const nav = [['home', 'Главная'], ['search', 'Поиск'], ['library', 'Библиотека'], ['inbox', 'Уведомления']].map(([key, label]) => `<a class="nav-item ${active === key ? 'active' : ''}" href="#${key}" ${active === key ? 'aria-current="page"' : ''}>${icon(key)}<span>${label}</span>${key === 'inbox' ? '<span class="unread-count" data-unread' + (!bootstrap?.unread_count ? ' hidden' : '') + '>' + h(bootstrap?.unread_count || '') + '</span>' : ''}</a>`).join('');
   const running = bootstrap?.health?.worker_running;
   return `<div class="app-layout">
@@ -156,11 +156,11 @@ export function libraryGameRows(games, groups = [], options = {}) {
 }
 export function libraryPage(games, profile = {}, config = {}, deliveryStatus = {}, collectionOptions = {}) {
   const groups = collectionOptions.collections || [];
-  return `${pageHeader('Библиотека', 'Ваши игры и личные правила уведомлений.', '<a class="button primary" href="#search">' + icon('plus') + 'Добавить игру</a>')}${feedEntry(games)}${games.length ? '<div class="library-tools-entry"><a class="button secondary" href="#bulk">Настроить несколько игр</a><a class="button quiet" href="#recap">Пока вы не играли</a></div>' : ''}<div class="library-transfer-actions"><button class="button secondary" type="button" data-action="steam-open">Импортировать из Steam</button><button class="button secondary" type="button" data-action="library-transfer-open">Добавить списком</button><button class="button quiet" type="button" data-action="library-export">Сохранить библиотеку</button>${!games.length ? '<a class="button quiet" href="#collections">Мои списки</a>' : ''}</div><section id="steam-panel" hidden></section>${libraryTransferPanel()}${deliveryControls(profile, config, deliveryStatus)}${games.length ? `${libraryCollectionFilters(games, groups, collectionOptions)}<div id="library-game-list">${libraryGameRows(games, groups, collectionOptions)}</div><p class="page-footnote">Это ваш список отслеживания. Владеть игрой в Steam, чтобы добавить её сюда, не требуется.</p>` : emptyState('Здесь будут ваши игры', 'Добавьте одну или несколько игр. История общая, а режим уведомлений для каждой игры выбираете вы.', '<a class="button primary" href="#search">Найти первую игру</a>')}`;
+  return `${pageHeader('Библиотека', 'Ваши игры и личные правила уведомлений.', '<a class="button primary" href="#search">' + icon('plus') + 'Добавить игру</a>')}<a class="library-prices-entry" href="#prices"><span><strong>Скидки · Хочу купить</strong><small>Выберите игры и DLC, о снижении цены которых сообщить.</small></span><span class="text-link">Открыть</span></a>${feedEntry(games)}${games.length ? '<div class="library-tools-entry"><a class="button secondary" href="#bulk">Настроить несколько игр</a><a class="button quiet" href="#recap">Пока вы не играли</a></div>' : ''}<div class="library-transfer-actions"><button class="button secondary" type="button" data-action="steam-open">Импортировать из Steam</button><button class="button secondary" type="button" data-action="library-transfer-open">Добавить списком</button><button class="button quiet" type="button" data-action="library-export">Сохранить библиотеку</button>${!games.length ? '<a class="button quiet" href="#collections">Мои списки</a>' : ''}</div><section id="steam-panel" hidden></section>${libraryTransferPanel()}${deliveryControls(profile, config, deliveryStatus)}${games.length ? `${libraryCollectionFilters(games, groups, collectionOptions)}<div id="library-game-list">${libraryGameRows(games, groups, collectionOptions)}</div><p class="page-footnote">Это ваш список отслеживания. Владеть игрой в Steam, чтобы добавить её сюда, не требуется.</p>` : emptyState('Здесь будут ваши игры', 'Добавьте одну или несколько игр. История общая, а режим уведомлений для каждой игры выбираете вы.', '<a class="button primary" href="#search">Найти первую игру</a>')}`;
 }
 
-export function profilePage(profile = {}) {
-  return `<a class="back-link" href="#library">${icon('arrow')}Библиотека</a>${pageHeader('Мой профиль', profile.name || 'Ваш профиль в приложении')}<section id="steam-panel"></section>`;
+export function profilePage(profile = {}, config = {}, deliveryStatus = {}) {
+  return `<a class="back-link" href="#library">${icon('arrow')}Библиотека</a>${pageHeader('Мой профиль', profile.name || 'Ваш профиль в приложении')}${deliveryControls(profile, config, deliveryStatus)}<section id="steam-panel"></section>`;
 }
 
 export function steamPanel(data = {}, selection = {}, filtered = []) {

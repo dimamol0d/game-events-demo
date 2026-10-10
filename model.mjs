@@ -42,7 +42,7 @@ export function parseRoute(hash = '') {
     if (match[1] === 'collection') return { page: 'collection', collectionId: Number(match[2]) };
     return { page: match[1], appId: Number(match[2]), eventId: new URLSearchParams(query).get('event') };
   }
-  const route = { page: ['home', 'search', 'library', 'inbox', 'feed', 'profile', 'bulk', 'recap', 'collections'].includes(path) ? path : 'home' };
+  const route = { page: ['home', 'search', 'library', 'inbox', 'feed', 'profile', 'bulk', 'recap', 'collections', 'prices'].includes(path) ? path : 'home' };
   const list = Number(new URLSearchParams(query).get('collection'));
   if (route.page === 'bulk' && Number.isSafeInteger(list) && list > 0) route.collectionId = list;
   return route;

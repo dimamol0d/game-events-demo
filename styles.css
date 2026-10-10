@@ -680,3 +680,58 @@ html[data-theme=dark] .button.danger { color: #f2bcb0; border-color: #996c61; }
 .classification-evidence li + li { margin-top: 1rem; }
 .classification-evidence p { margin: .4rem 0; }
 .classification-evidence blockquote { margin: .4rem 0; padding-left: .75rem; border-left: 3px solid var(--mint); overflow-wrap: anywhere; color: var(--muted); }
+
+.library-prices-entry { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin: 20px 0; padding: 20px 22px; border-left: 3px solid var(--mint); background: var(--surface); color: var(--ink); }
+.library-prices-entry > span:first-child { min-width: 0; }
+.library-prices-entry strong, .library-prices-entry small { display: block; overflow-wrap: anywhere; }
+.library-prices-entry small { color: var(--muted); margin-top: 6px; font-size: .8rem; line-height: 1.6; }
+.library-prices-entry > .text-link { flex-shrink: 0; }
+.price-region { padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.price-region h2, .price-search h2 { font-size: 1.15rem; }
+.price-region form { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin: 15px 0; }
+.price-region .schedule-field { flex: 1 1 240px; max-width: 410px; min-width: 0; }
+.price-region-warning { margin-bottom: 0; }
+.price-delivery-note { color: var(--muted); font-size: .82rem; line-height: 1.7; max-width: 75ch; margin: 20px 0 27px; }
+.price-delivery-note p { margin: 7px 0; }
+.price-wishlist .section-heading { gap: 12px; flex-wrap: wrap; }
+.price-item { padding: 23px 0; border-top: 1px solid var(--line); min-width: 0; }
+.price-item-heading { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.price-item-heading > div { min-width: 0; }
+.price-item-heading h2 { font-size: 1.15rem; line-height: 1.45; overflow-wrap: anywhere; margin: 7px 0 12px; }
+.price-item-heading > a { flex-shrink: 0; font-size: .8rem; }
+.price-value { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 5px 0; }
+.price-value strong { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.price-value del { color: var(--muted); font-size: .88rem; }
+.price-value .subtle { font-size: .78rem; }
+.price-discount { padding: 4px 8px; background: var(--mint); color: #163b30; font-size: .82rem; font-weight: 700; border-radius: 5px; }
+.price-checked { font-size: .72rem; color: var(--muted); margin: 9px 0; }
+.price-unavailable { font-size: .86rem; color: var(--muted); }
+.price-rule-caption { font-size: .86rem; margin: 16px 0 9px; }
+.price-confirmation-needed { color: #315b93; }
+.price-rule-editor { margin-bottom: 12px; }
+.price-rule-editor > summary { padding: 10px 0; cursor: pointer; color: #315b93; font-size: .86rem; }
+.price-rule-form { margin-top: 7px; max-width: 440px; }
+.price-rule-form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.price-rule-form .check-row { margin-bottom: 15px; }
+.price-rule-form .schedule-field { margin: 13px 0; }
+.price-draft-note { font-size: .78rem; color: var(--muted); }
+.price-search { margin: 30px 0; padding-top: 22px; border-top: 1px solid var(--line); }
+.price-search form { margin: 17px 0; }
+.price-search .search-field { padding-left: 16px; }
+.price-search-row { display: flex; align-items: center; gap: 15px; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.price-search-row > div { min-width: 0; }
+.price-search-row strong { display: block; font-size: .95rem; overflow-wrap: anywhere; }
+.price-search-row small { display: block; color: var(--muted); font-size: .75rem; margin-top: 7px; }
+.price-search-row > .button { flex-shrink: 0; }
+html[data-theme=dark] .price-rule-editor > summary, html[data-theme=dark] .price-confirmation-needed { color: #96b5f8; }
+@media (max-width: 600px) {
+  .library-prices-entry { padding: 17px; }
+  .price-region form { align-items: stretch; flex-direction: column; }
+  .price-region .schedule-field { flex-basis: auto; max-width: none; }
+  .price-region form > .button { align-self: flex-start; }
+  .price-item-heading h2 { font-size: 1.05rem; }
+  .price-search-row { gap: 10px; }
+  .price-search-row > .button { font-size: .73rem; padding: 10px; }
+  .price-item .button, .price-rule-editor > summary { min-height: 44px; }
+  .price-value strong { font-size: 1.35rem; }
+}
