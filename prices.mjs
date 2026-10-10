@@ -45,17 +45,65 @@ export function expectedPriceRegion(snapshot) {
     || typeof version !== 'string' || !version.trim()) return null;
   return { country, version };
 }
+function validHistoryDate(value) { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
+export function validatePriceHistory(value, appId, snapshot) {
+  const region = expectedPriceRegion(snapshot); const currency = regionCurrency(snapshot);
+  if (!region || value?.app_id !== Number(appId) || value?.country !== region.country
+      || value?.region_version !== region.version || value?.currency !== currency) {
+    throw new Error('Регион или список игр изменился. Обновите список цен и откройте историю снова.');
+  }
+  const amount = number => Number.isSafeInteger(number) && number >= 0;
+  if (!Array.isArray(value.points) || value.points.length > 120 || !Number.isSafeInteger(value.total_points)
+      || value.total_points < value.points.length || typeof value.truncated !== 'boolean'
+      || value.truncated !== (value.total_points > value.points.length)) throw new Error('Сервер вернул неполную историю цен. Повторите загрузку.');
+  let previous = -Infinity;
+  for (const point of value.points) {
+    const at = Date.parse(point?.observed_at); const seen = Date.parse(point?.last_seen_at);
+    if (!validHistoryDate(point?.observed_at) || !validHistoryDate(point?.last_seen_at) || at < previous || seen < at
+        || !amount(point?.initial) || !amount(point?.final) || point.initial < point.final
+        || !Number.isSafeInteger(point?.discount_percent) || point.discount_percent < 0 || point.discount_percent > 100) {
+      throw new Error('Не удалось прочитать сохранённые проверки цены. Повторите загрузку.');
+    }
+    previous = at;
+  }
+  if (value.points.length) {
+    if (!validHistoryDate(value.started_at) || !validHistoryDate(value.last_changed_at)
+        || !amount(value.minimum?.final) || !validHistoryDate(value.minimum?.observed_at)) {
+      throw new Error('Сервер не подтвердил даты или минимальную зафиксированную цену.');
+    }
+  } else if (value.minimum !== null || value.total_points !== 0) throw new Error('Сервер вернул неполную историю цен.');
+  for (const name of ['last_checked_at', 'last_success_at']) {
+    if (value[name] != null && !validHistoryDate(value[name])) throw new Error('Сервер не подтвердил дату проверки цены.');
+  }
+  return value;
+}
 export function createPriceTools() {
-  const state = { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), removeId: null };
+  const state = { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), histories: new Map(), removeId: null };
   let generation = 0; let readEpoch = 0; let searchEpoch = 0; let readController; let searchController;
   function cancelRead() { readEpoch++; readController?.abort(); readController = null; state.loading = false; }
   function cancelSearch() { searchEpoch++; searchController?.abort(); searchController = null; state.searching = false; }
-  function cancel() { cancelRead(); cancelSearch(); }
+  function cancelHistory(entry) {
+    entry.read++; entry.controller?.abort(); entry.controller = null;
+    if (entry.loading) entry.error = 'Загрузка истории прервана. Нажмите «Повторить», чтобы продолжить.';
+    entry.loading = false;
+  }
+  function cancelHistories() { for (const entry of state.histories.values()) cancelHistory(entry); }
+  function cancel() { cancelRead(); cancelSearch(); cancelHistories(); }
   function accept(snapshot) {
     if (!snapshot?.settings || !Array.isArray(snapshot.items) || !Array.isArray(snapshot.settings.regions)) throw new Error('Сервер не подтвердил список скидок. Обновите его.');
     const previous = state.snapshot;
     const regionChanged = previous?.settings.country !== snapshot.settings.country
       || previous?.settings.region_version !== snapshot.settings.region_version;
+    for (const [id, entry] of state.histories) {
+      const next = snapshot.items.find(value => Number(value.app_id) === id);
+      if (regionChanged || !next) { cancelHistory(entry); state.histories.delete(id); }
+      else {
+        const before = previous?.items.find(value => Number(value.app_id) === id);
+        if (JSON.stringify(before?.price) !== JSON.stringify(next.price)) {
+          cancelHistory(entry); entry.stale = Boolean(entry.data);
+        }
+      }
+    }
     for (const [id, draft] of state.drafts) {
       const oldRule = previous?.items.find(value => Number(value.app_id) === id)?.rule;
       const newRule = snapshot.items.find(value => Number(value.app_id) === id)?.rule;
@@ -64,7 +112,7 @@ export function createPriceTools() {
     }
     state.snapshot = snapshot; state.loaded = true; state.country = snapshot.settings.country || ''; state.removeId = null;
   }
-  function clear() { generation++; cancel(); Object.assign(state, { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), removeId: null }); }
+  function clear() { generation++; cancel(); Object.assign(state, { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), histories: new Map(), removeId: null }); }
   async function load(fetcher, current, changed = () => {}) {
     if (state.busy) return;
     cancelRead(); const epoch = readEpoch; const owner = generation; readController = new AbortController(); const signal = readController.signal;
@@ -95,9 +143,45 @@ export function createPriceTools() {
     return saved;
   }
   function item(appId) { return state.snapshot?.items.find(value => Number(value.app_id) === Number(appId)); }
+  function history(appId) {
+    const id = Number(appId); if (!item(id)) return null;
+    if (!state.histories.has(id)) state.histories.set(id, { open: false, data: null, loading: false, error: '', stale: false, read: 0, controller: null });
+    return state.histories.get(id);
+  }
+  function closeHistory(appId) {
+    const entry = state.histories.get(Number(appId)); if (!entry) return;
+    cancelHistory(entry); entry.open = false;
+  }
+  async function loadHistory(appId, fetcher, current, changed = () => {}, { force = false } = {}) {
+    if (state.busy || state.loading) return false;
+    const id = Number(appId); const entry = history(id); if (!entry) return false;
+    entry.open = true;
+    if (entry.loading || entry.data && !entry.stale && !force) { changed(); return false; }
+    const region = expectedPriceRegion(state.snapshot);
+    if (!region) { entry.error = 'Обновите список цен перед загрузкой истории.'; changed(); return false; }
+    cancelHistory(entry); const read = entry.read; const owner = generation;
+    entry.controller = new AbortController(); const signal = entry.controller.signal;
+    const valid = () => owner === generation && state.histories.get(id) === entry && read === entry.read && !signal.aborted
+      && Boolean(item(id)) && expectedPriceRegion(state.snapshot)?.country === region.country
+      && expectedPriceRegion(state.snapshot)?.version === region.version && current();
+    entry.loading = true; entry.error = ''; changed();
+    try {
+      const result = await fetcher(id, signal);
+      if (!valid()) return false;
+      entry.data = validatePriceHistory(result, id, state.snapshot); entry.stale = false;
+      return true;
+    } catch (error) {
+      if (valid()) entry.error = error.message || 'Не удалось загрузить историю цен.';
+      return false;
+    } finally {
+      if (owner === generation && state.histories.get(id) === entry && read === entry.read) {
+        entry.loading = false; entry.controller = null; if (current()) changed();
+      }
+    }
+  }
   function draft(appId) {
     const id = Number(appId); if (!state.drafts.has(id)) { const rule = item(id)?.rule || {}; state.drafts.set(id, { enabled: rule.enabled !== false, mode: modes.has(rule.mode) ? rule.mode : 'any', percent: String(rule.percent || 50), price: rule.needs_confirmation ? '' : priceInput(rule.price_minor) }); }
     return state.drafts.get(id);
   }
-  return { state, cancel, cancelSearch, clear, accept, load, search, write, item, draft };
+  return { state, cancel, cancelSearch, clear, accept, load, search, write, item, draft, history, closeHistory, loadHistory };
 }

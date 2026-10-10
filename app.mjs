@@ -1,16 +1,16 @@
-import { api, ApiError } from './api.mjs?v=20261010-audit1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261010-audit1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261010-audit1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261010-audit1';
-import { loadRuntimeConfig } from './config.mjs?v=20261010-audit1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261010-audit1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261010-audit1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261010-audit1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261010-audit1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261010-audit1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261010-audit1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261010-audit1';
-import { pricesPage, priceSearchResults } from './prices-views.mjs?v=20261010-audit1';
+import { api, ApiError } from './api.mjs?v=20261010-history1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261010-history1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261010-history1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261010-history1';
+import { loadRuntimeConfig } from './config.mjs?v=20261010-history1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261010-history1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261010-history1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261010-history1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261010-history1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261010-history1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261010-history1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261010-history1';
+import { pricesPage, priceSearchResults, priceHistory } from './prices-views.mjs?v=20261010-history1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -70,6 +70,15 @@ function drawPriceSearch() {
   if (!state.bootstrap || state.route.page !== 'prices') return;
   const region = document.querySelector('#price-search-results');
   if (region) region.innerHTML = priceSearchResults(priceTools());
+}
+function drawPriceHistory(appId) {
+  if (!state.bootstrap || state.route.page !== 'prices') return;
+  const region = document.querySelector(`[data-price-history="${Number(appId)}"]`);
+  if (region) region.innerHTML = priceHistory(priceTools(), appId);
+}
+async function openPriceHistory(appId, { force = false } = {}) {
+  if (document.hidden || !state.bootstrap || state.route.page !== 'prices') return;
+  await priceTools().loadHistory(appId, (id, signal) => api.priceHistory(id, signal), priceContext(), () => drawPriceHistory(appId), { force });
 }
 function priceContext() {
   const owner = authenticationEpoch; const epoch = navigationEpoch;
@@ -1120,6 +1129,11 @@ document.addEventListener('click', async event => {
     if (tools.state.busy || tools.state.loading) return;
     if (action === 'prices-refresh') await refreshPrices();
     if (action === 'price-search-retry') await searchPrices();
+    if (action === 'price-history-toggle' && tools.item(appId)) {
+      if (tools.history(appId).open) { tools.closeHistory(appId); drawPriceHistory(appId); }
+      else await openPriceHistory(appId);
+    }
+    if ((action === 'price-history-retry' || action === 'price-history-refresh') && tools.item(appId)) await openPriceHistory(appId, { force: true });
     if (action === 'price-add' && Number.isSafeInteger(appId) && appId > 0) {
       if (tools.item(appId)) return;
       if ((tools.state.snapshot?.items.length || 0) >= (tools.state.snapshot?.limit || 30)) { toast('Можно сохранить до 30 игр и DLC. Уберите одну из списка.'); return; }

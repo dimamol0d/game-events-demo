@@ -213,6 +213,11 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     library: () => request('/api/library'),
     collections: signal => request('/api/library/collections', { signal }),
     prices: signal => request('/api/prices', { signal }),
+    priceHistory: (appId, signal) => {
+      const id = Number(appId);
+      if (!['number', 'string'].includes(typeof appId) || !/^\d+$/.test(String(appId)) || !Number.isSafeInteger(id) || id < 1 || id > 4294967295) throw new ApiError('Для истории нужен корректный Steam AppID.');
+      return request(`/api/prices/items/${id}/history`, { signal });
+    },
     savePriceRegion: country => request('/api/prices/region', { method: 'POST', body: { country } }),
     addPriceGame: appId => request('/api/prices/items', { method: 'POST', body: { app_id: appId } }),
     savePriceRule: (appId, rule, expectedRegion) => request(`/api/prices/items/${appId}`, { method: 'PUT', body: { rule, ...(expectedRegion ? { expected_region: expectedRegion } : {}) } }),
