@@ -23,6 +23,7 @@ const state = { bootstrap: null, route: parseRoute(location.hash), search: { que
 let navigationEpoch = 0;
 let authenticationEpoch = 0;
 let searchEpoch = 0;
+let notificationReadEpoch = 0;
 let searchTimer;
 let searchController;
 let toastTimer;
@@ -213,6 +214,18 @@ function preserveLibraryChanges(fresh, revision) {
   });
   for (const appId of changed) if (!seen.has(appId) && current.has(appId)) fresh.library.push(current.get(appId));
 }
+function preserveCollectionMembership(groups, revision) {
+  if (!state.bootstrap || revision === libraryRevision) return groups;
+  const changed = new Set([...libraryMembershipChanges].filter(([, changedAt]) => changedAt > revision).map(([appId]) => appId));
+  if (!changed.size) return groups;
+  const current = new Map((state.bootstrap.collections || []).map(group => [Number(group.id), group]));
+  // Unsubscribing removes list membership. A later subscription must not gain
+  // those old links again from a read or another list's delayed write reply.
+  return groups.map(group => ({ ...group, app_ids: [
+    ...(group.app_ids || []).filter(appId => !changed.has(Number(appId))),
+    ...(current.get(Number(group.id))?.app_ids || []).filter(appId => changed.has(Number(appId))),
+  ] }));
+}
 function currentLibraryPage() {
   reconcileCollections();
   return libraryPage(state.bootstrap.library, state.bootstrap.profile, state.config, state.bootstrap.delivery_status, { ...collections.state, collections: collections.collections });
@@ -247,13 +260,13 @@ function cancelCollectionReads() {
 async function refreshCollections() {
   if (!state.bootstrap || collections.state.busy) return;
   cancelCollectionReads();
-  const read = collectionReadEpoch; const owner = authenticationEpoch; const revision = collectionRevision;
+  const read = collectionReadEpoch; const owner = authenticationEpoch; const revision = collectionRevision; const libraryReadRevision = libraryRevision;
   collectionReadController = new AbortController(); const signal = collectionReadController.signal;
   collections.state.loading = true; collections.state.error = ''; drawCollections();
   try {
     const result = await api.collections(signal);
     if (owner !== authenticationEpoch || read !== collectionReadEpoch || revision !== collectionRevision || !state.bootstrap) return;
-    state.bootstrap.collections = result.collections || []; reconcileCollections();
+    state.bootstrap.collections = preserveCollectionMembership(result.collections || [], libraryReadRevision); reconcileCollections();
     if (state.route.page === 'game-lists') collections.startGame(state.route.appId, { force: true });
     if (state.route.page === 'collection') collections.state.name = collections.group()?.name || '';
   } catch (error) { if (owner === authenticationEpoch && read === collectionReadEpoch && !signal.aborted) collections.state.error = 'Не удалось обновить списки. ' + error.message; }
@@ -268,11 +281,14 @@ function acceptCollection(item) {
 async function writeCollection(task, accept, message) {
   if (!state.bootstrap || collections.state.busy) return;
   const owner = authenticationEpoch;
+  const libraryReadRevision = libraryRevision;
   cancelCollectionReads(); collectionRevision++;
   collections.state.busy = true; collections.state.error = ''; collections.state.message = 'Сохраняем списки…'; drawCollections();
   try {
     const result = await task();
     if (owner !== authenticationEpoch || !state.bootstrap) return;
+    if (result?.collection) result.collection = preserveCollectionMembership([result.collection], libraryReadRevision)[0];
+    if (Array.isArray(result?.collections)) result.collections = preserveCollectionMembership(result.collections, libraryReadRevision);
     accept(result); collections.state.message = message; toast(message);
   } catch (error) { if (owner === authenticationEpoch) collections.state.error = `Не удалось подтвердить сохранение. ${error.message} При потере ответа изменение могло сохраниться; повторите тот же выбор или обновите списки.`; }
   finally { if (owner === authenticationEpoch) { collections.state.busy = false; drawCollections(); if (state.route.page === 'library') setMain(currentLibraryPage()); } }
@@ -783,6 +799,12 @@ async function copyTransfer() {
   }
   document.querySelector('#library-transfer-message')?.replaceChildren(document.createTextNode(transfer.message));
 }
+async function readNotifications() {
+  const read = ++notificationReadEpoch; const owner = authenticationEpoch;
+  const current = () => read === notificationReadEpoch && owner === authenticationEpoch;
+  try { const result = await api.notifications(); return current() ? result : null; }
+  catch (error) { if (current()) throw error; return null; }
+}
 function updateUnread(count) {
   if (state.bootstrap) state.bootstrap.unread_count = count;
   document.querySelectorAll('[data-unread]').forEach(badge => { badge.textContent = String(count || ''); badge.hidden = !count; });
@@ -802,6 +824,7 @@ async function syncBootstrap() {
   const fresh = await api.bootstrap();
   if (owner !== authenticationEpoch) return state.bootstrap;
   if (revision !== collectionRevision && state.bootstrap) fresh.collections = state.bootstrap.collections;
+  else fresh.collections = preserveCollectionMembership(fresh.collections || [], libraryReadRevision);
   // Only rows changed after this read began override its snapshot. Confirmed
   // additions, removals and preferences survive without hiding other games'
   // newly fetched data.
@@ -922,8 +945,8 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
       if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
       else if (state.route.page === 'library') setMain(currentLibraryPage());
       else if (state.route.page === 'inbox') {
-        const result = await api.notifications();
-        if (epoch !== navigationEpoch) return;
+        const result = await readNotifications();
+        if (!result || epoch !== navigationEpoch) return;
         state.notifications = result;
         updateUnread(result.unread_count);
         setMain(inboxPage(result, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
@@ -1038,8 +1061,8 @@ async function loadRoute({ focus = true, force = false } = {}) {
   setMain(loadingState(route.page === 'inbox' ? 'Загружаем уведомления…' : 'Загружаем игру…'), focus);
   try {
     if (route.page === 'inbox') {
-      const result = await api.notifications();
-      if (epoch !== navigationEpoch) return;
+      const result = await readNotifications();
+      if (!result || epoch !== navigationEpoch) return;
       state.notifications = result;
       updateUnread(result.unread_count);
       setMain(inboxPage(result, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
@@ -1320,9 +1343,12 @@ document.addEventListener('click', async event => {
     const owner = authenticationEpoch;
     await api.markRead();
     if (owner !== authenticationEpoch || !state.bootstrap) return;
-    updateUnread(0);
-    if (state.notifications) state.notifications = { ...state.notifications, unread_count: 0, items: state.notifications.items.map(item => ({ ...item, read: true })) };
-    if (state.route.page === 'inbox') setMain(inboxPage(state.notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
+    // New notices can arrive after the server marked the existing ones read.
+    // Read its current grouped snapshot instead of marking a newer UI list.
+    const result = await readNotifications();
+    if (!result || owner !== authenticationEpoch || !state.bootstrap) return;
+    state.notifications = result; updateUnread(result.unread_count);
+    if (state.route.page === 'inbox') { setMain(inboxPage(result, state.bootstrap.profile, state.config, state.bootstrap.delivery_status)); scheduleOverviewPoll(navigationEpoch); }
     toast('Уведомления отмечены прочитанными.');
   });
 });
