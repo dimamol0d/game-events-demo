@@ -1,5 +1,5 @@
-import { escapeHTML as h } from './model.mjs?v=20261011-wishlist1';
-import { expectedPriceRegion, PRICE_LIST_LIMIT } from './prices.mjs?v=20261011-wishlist1';
+import { escapeHTML as h } from './model.mjs?v=20261011-postwishlist1';
+import { expectedPriceRegion, PRICE_LIST_LIMIT } from './prices.mjs?v=20261011-postwishlist1';
 
 const validId = id => Number.isSafeInteger(id) && id > 0 && id <= 4294967295;
 const tokenPattern = /^[a-f0-9]{64}$/;
