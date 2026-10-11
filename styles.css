@@ -747,6 +747,24 @@ html[data-theme=dark] .price-rule-editor > summary, html[data-theme=dark] .price
 html[data-theme=dark] .price-history-toggle, html[data-theme=dark] .price-history-table > summary { color: #96b5f8; }
 html[data-theme=dark] .price-chart-line { stroke: #96b5f8; }
 html[data-theme=dark] .price-chart-point { fill: #96b5f8; }
+.price-steam-import { margin: 20px 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); min-width: 0; }
+.price-steam-import h3 { margin: 0; font-size: 1.1rem; }
+.price-steam-import .subtle { font-size: .82rem; line-height: 1.65; }
+.price-steam-count { display: flex; gap: 10px 20px; flex-wrap: wrap; font-size: .82rem; margin: 17px 0; }
+.price-steam-games { margin: 17px 0; max-height: 420px; overflow: auto; overscroll-behavior: contain; border-top: 1px solid var(--line); }
+.price-steam-game { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.price-steam-game > input { margin-top: 3px; width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--blue); }
+.price-steam-game > span { min-width: 0; }
+.price-steam-game strong, .price-steam-game small { display: block; overflow-wrap: anywhere; }
+.price-steam-game strong { font-size: .92rem; font-weight: 600; }
+.price-steam-game small { font-size: .73rem; line-height: 1.6; color: var(--muted); margin-top: 5px; }
+.price-steam-game .price-steam-known { color: #315b93; }
+.price-steam-game input:disabled + span { opacity: .75; }
+.price-steam-import .schedule-field { max-width: 440px; margin: 15px 0; }
+.price-steam-import fieldset { border: 0; margin: 23px 0 17px; padding: 0; min-width: 0; }
+.price-steam-import legend { font-weight: 600; font-size: .92rem; }
+.price-steam-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+html[data-theme=dark] .price-steam-game .price-steam-known { color: #96b5f8; }
 @media (max-width: 600px) {
   .library-prices-entry { padding: 17px; }
   .price-region form { align-items: stretch; flex-direction: column; }
@@ -761,4 +779,7 @@ html[data-theme=dark] .price-chart-point { fill: #96b5f8; }
   .price-history-facts { grid-template-columns: 1fr; gap: 12px; }
   .price-history-table th, .price-history-table td { padding: 9px 5px; }
   .price-history-table > summary { min-height: 44px; }
+  .price-steam-import { padding: 13px; }
+  .price-steam-actions .button { min-height: 44px; }
+  .price-wishlist .section-heading > [data-action="price-steam-open"] { width: 100%; }
 }
