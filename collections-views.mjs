@@ -1,5 +1,5 @@
-import { escapeHTML as h } from './model.mjs?v=20261010-history1';
-import { COLLECTION_LIMIT, collectionGames } from './collections.mjs?v=20261010-history1';
+import { escapeHTML as h } from './model.mjs?v=20261011-check1';
+import { COLLECTION_LIMIT, collectionGames } from './collections.mjs?v=20261011-check1';
 
 const back = (href = '#library', label = 'Библиотека') => `<a class="back-link" href="${href}">${h(label)}</a>`;
 const status = state => `<div id="collections-message" class="transfer-message" role="status" aria-live="polite">${h(state.error || state.message || (state.loading ? 'Обновляем списки…' : ''))}</div>`;

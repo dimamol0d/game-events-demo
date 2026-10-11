@@ -1,16 +1,16 @@
-import { api, ApiError } from './api.mjs?v=20261010-history1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261010-history1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261010-history1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261010-history1';
-import { loadRuntimeConfig } from './config.mjs?v=20261010-history1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261010-history1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261010-history1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261010-history1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261010-history1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261010-history1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261010-history1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261010-history1';
-import { pricesPage, priceSearchResults, priceHistory } from './prices-views.mjs?v=20261010-history1';
+import { api, ApiError } from './api.mjs?v=20261011-check1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261011-check1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261011-check1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261011-check1';
+import { loadRuntimeConfig } from './config.mjs?v=20261011-check1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261011-check1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261011-check1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261011-check1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261011-check1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261011-check1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261011-check1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261011-check1';
+import { pricesPage, priceSearchResults, priceHistory } from './prices-views.mjs?v=20261011-check1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -41,7 +41,7 @@ const mutations = new Set();
 const preferenceWrites = new Map();
 const PREFERENCE_WAIT_MESSAGE = 'Настройки этой игры уже сохраняются. Дождитесь завершения, затем сохраните свой выбор.';
 const BULK_WAIT_MESSAGE = 'Настройки части выбранных игр уже сохраняются. Дождитесь завершения, затем примените свой выбор.';
-const translationRequested = new Set();
+const translationRequested = new Map();
 const deliveryDiagnostics = new Map();
 const transfer = { open: false, input: '', entries: [], selected: new Set(), busy: false, message: '', exportText: '', readEpoch: 0 };
 const steam = { open: false, status: null, loginURL: '', loaded: false, busy: '', message: '', error: '', pollCount: 0 };
@@ -880,7 +880,6 @@ function queueSelectedTranslation() {
   const event = state.game?.events.find(item => eventMatchesId(item, state.route.eventId));
   if (!event || translationRequested.has(String(event.id)) || event.kind === 'public_build_changed'
     || event.short_translation_status === 'ready' || String(event.original_language || '').toLowerCase().startsWith('ru') || !event.contents?.trim()) return;
-  translationRequested.add(String(event.id));
   requestTranslation(event, true).catch(() => {});
 }
 
@@ -888,23 +887,34 @@ async function requestTranslation(event, shortOnly = false) {
   const eventId = Number(event.id);
   if (!Number.isSafeInteger(eventId) || eventId < 1) return false;
   const epoch = navigationEpoch;
-  const result = await (shortOnly ? api.translateShort(eventId) : api.translate(eventId));
-  if (epoch !== navigationEpoch || state.route.page !== 'game') return result.queued;
-  if (result.queued) {
-    if (result.short_queued) event.short_translation_status = 'pending';
-    if (result.full_queued || !shortOnly && result.full_queued === undefined) event.translation_status = 'pending';
-    renderGame();
-    scheduleGamePoll(epoch, 2500);
-  } else {
-    const index = state.game.events.findIndex(item => String(item.id) === String(event.id));
-    const libraryReadRevision = libraryRevision;
-    const fresh = await api.game(state.route.appId, Math.floor(Math.max(0, index) / 30) * 30);
-    if (epoch !== navigationEpoch || state.route.page !== 'game') return false;
-    state.game.events = mergeEvents(state.game.events, fresh.events);
-    updateGameSummary(fresh.game, libraryReadRevision);
-    renderGame();
+  const owner = authenticationEpoch;
+  const key = String(event.id); const attempt = {};
+  translationRequested.set(key, attempt);
+  const current = () => owner === authenticationEpoch && epoch === navigationEpoch && Boolean(state.bootstrap) && state.route.page === 'game';
+  try {
+    const result = await (shortOnly ? api.translateShort(eventId) : api.translate(eventId));
+    if (!current()) return result.queued;
+    if (result.queued) {
+      if (result.short_queued) event.short_translation_status = 'pending';
+      if (result.full_queued || !shortOnly && result.full_queued === undefined) event.translation_status = 'pending';
+      renderGame();
+      scheduleGamePoll(epoch, 2500);
+    } else {
+      const index = state.game.events.findIndex(item => String(item.id) === String(event.id));
+      const libraryReadRevision = libraryRevision;
+      const fresh = await api.game(state.route.appId, Math.floor(Math.max(0, index) / 30) * 30);
+      if (!current()) return false;
+      state.game.events = mergeEvents(state.game.events, fresh.events);
+      updateGameSummary(fresh.game, libraryReadRevision);
+      renderGame();
+    }
+    return result.queued;
+  } catch (error) {
+    // A transport failure must allow another deliberate visit or click to
+    // retry. An older failure cannot release a newer request for the same ID.
+    if (translationRequested.get(key) === attempt) translationRequested.delete(key);
+    throw error;
   }
-  return result.queued;
 }
 
 function scheduleGamePoll(epoch, delay = 4500) {
@@ -1229,10 +1239,11 @@ document.addEventListener('click', async event => {
     window.scrollTo({ top: scroll, behavior: 'instant' });
   }
   else if (action === 'translate') await mutateButton(button, 'translate-' + button.dataset.eventId, async () => {
+    const owner = authenticationEpoch;
     const publication = state.game?.events.find(item => String(item.id) === button.dataset.eventId);
     if (!publication) return;
-    translationRequested.add(String(publication.id));
     const queued = await requestTranslation(publication);
+    if (owner !== authenticationEpoch || !state.bootstrap) return;
     const ready = state.game?.events.find(item => String(item.id) === button.dataset.eventId)?.translation_status === 'ready';
     toast(queued ? 'Русский перевод готовится. Пока доступен оригинал.' : ready ? 'Русский перевод готов.' : 'Перевод сейчас недоступен или уже готовится. Можно читать оригинал.');
   });
@@ -1618,6 +1629,7 @@ document.addEventListener('visibilitychange', () => {
 
 async function start() {
   authenticationEpoch++;
+  translationRequested.clear();
   prices?.clear(); clearTimeout(priceSearchTimer);
   cancelDeliveryDiagnostics({ clear: true });
   cancelCollectionReads(); collectionRevision++; collections.clear();
