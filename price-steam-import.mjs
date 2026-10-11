@@ -71,6 +71,7 @@ export function createPriceSteamImport() {
       if (valid()) {
         state.error = error.message || 'Не удалось загрузить желаемое из Steam.';
         if (['steam_connection_changed', 'steam_not_connected', 'steam_wishlist_private', 'steam_wishlist_changed'].includes(error.code)) invalidate(state.error);
+        if (error.code === 'steam_not_connected') state.connected = false;
       }
     }
     finally { if (owner === generation && read === readEpoch) { state.loading = false; controller = null; if (current()) changed(); } else if (owner === generation && current()) changed(); }
@@ -84,8 +85,9 @@ export function createPriceSteamImport() {
     catch (error) { state.error = error.message; changed(); return { added: 0 }; }
     const ids = [...state.selected]; if (!ids.length) return { added: 0 };
     const owner = generation; const account = state.accountToken;
-    const valid = () => owner === generation && account === state.accountToken && current();
-    cancel(); state.busy = true; state.error = ''; state.message = `Добавляем выбранные игры: 0 из ${ids.length}…`; changed();
+    cancel(); const write = readEpoch;
+    const valid = () => owner === generation && write === readEpoch && account === state.accountToken && current();
+    state.busy = true; state.error = ''; state.message = `Добавляем выбранные игры: 0 из ${ids.length}…`; changed();
     let added = 0; let completed = 0;
     try {
       for (let start = 0; start < ids.length && valid(); start += 5) {
@@ -119,6 +121,7 @@ export function createPriceSteamImport() {
       if (valid()) {
         state.error = `${error.message || 'Не удалось завершить импорт.'} Подтверждённые игры сохранены. Если ответ потерялся, часть игр могла добавиться; повтор не создаст дубликаты и сохранит настройки.`;
         if (['steam_connection_changed', 'steam_not_connected', 'steam_region_changed', 'steam_wishlist_changed'].includes(error.code)) invalidate(state.error);
+        if (error.code === 'steam_not_connected') state.connected = false;
       }
     } finally { if (owner === generation) { state.busy = false; if (current()) changed(); } }
     return { added, completed };

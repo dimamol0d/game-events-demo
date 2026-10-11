@@ -111,7 +111,7 @@ async function addPriceSteamWishlist() {
     if (owner === authenticationEpoch) {
       tools.state.busy = false;
       if (document.hidden) priceImportRefreshPending = true;
-      if (state.route.page === 'prices') { drawPrices(); if (epoch !== navigationEpoch && !document.hidden) await refreshPrices(); }
+      if (state.route.page === 'prices') { drawPrices(); if ((epoch !== navigationEpoch || priceImportRefreshPending) && !document.hidden) { priceImportRefreshPending = false; await refreshPrices(); } }
     }
   }
 }
@@ -608,8 +608,9 @@ async function refreshSteam({ preview = true, autoOpen = false, forceLibrary = f
 }
 
 function acceptSteamStatus(status, { wishlistReading = false } = {}) {
-  const previousId = steam.status?.account?.steam_id;
-  const changed = previousId !== status.account?.steam_id;
+  const previousAccount = steam.status?.account;
+  const previousId = previousAccount?.steam_id;
+  const changed = previousId !== status.account?.steam_id || previousAccount?.linked_at !== status.account?.linked_at;
   if (previousId && changed || !status.connected) {
     priceImport?.invalidate('Steam-аккаунт изменился или отвязан. Подключите нужный аккаунт и загрузите желаемое снова.', { cancelRead: !wishlistReading });
     if (priceImport && !status.connected) priceImport.state.connected = false;
@@ -648,6 +649,7 @@ async function unlinkSteam() {
     if (!current()) return;
     steam.status = result; steam.loginURL = ''; steamSelection.clear(); steam.loaded = false;
     priceImport?.invalidate('Steam отвязан. Подключите аккаунт в профиле и загрузите желаемое снова.');
+    if (priceImport) priceImport.state.connected = false;
     steam.message = 'Steam отвязан. Ваши игры и настройки в радаре сохранены.';
   } catch (error) { if (current()) steam.error = error.message; }
   finally { if (current()) { steam.busy = ''; drawSteam(); } }
@@ -1688,7 +1690,7 @@ window.addEventListener('focus', () => {
 });
 document.addEventListener('visibilitychange', () => {
   if (!state.bootstrap) return;
-  if (document.hidden) { cancelDeliveryDiagnostics(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); prices?.cancel(); priceImport?.cancel(); clearTimeout(priceSearchTimer); }
+  if (document.hidden) { cancelDeliveryDiagnostics(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); prices?.cancel(); if (priceImport?.state.busy) priceImportRefreshPending = true; priceImport?.cancel(); clearTimeout(priceSearchTimer); }
   else {
     drawDeliveryDiagnostics();
     if (['collections', 'collection', 'game-lists'].includes(state.route.page)) drawCollections();
