@@ -1,5 +1,5 @@
-import { escapeHTML as h } from './model.mjs?v=20261011-check1';
-import { expectedPriceRegion, PRICE_LIST_LIMIT } from './prices.mjs?v=20261011-check1';
+import { escapeHTML as h } from './model.mjs?v=20261011-wishlist1';
+import { expectedPriceRegion, PRICE_LIST_LIMIT } from './prices.mjs?v=20261011-wishlist1';
 
 const validId = id => Number.isSafeInteger(id) && id > 0 && id <= 4294967295;
 const tokenPattern = /^[a-f0-9]{64}$/;
@@ -123,7 +123,7 @@ export function createPriceSteamImport() {
         if (['steam_connection_changed', 'steam_not_connected', 'steam_region_changed', 'steam_wishlist_changed'].includes(error.code)) invalidate(state.error);
         if (error.code === 'steam_not_connected') state.connected = false;
       }
-    } finally { if (owner === generation) { state.busy = false; if (current()) changed(); } }
+    } finally { if (owner === generation) { if (write !== readEpoch && account === state.accountToken) state.message = 'Импорт остановлен. Уже отправленная часть могла сохраниться. Проверьте «Хочу купить» перед повтором; повтор не создаст дубликаты.'; state.busy = false; if (current()) changed(); } }
     return { added, completed };
   }
   return { state, cancel, reset, invalidate, reconcile, filtered, toggle, rule, load, add };
