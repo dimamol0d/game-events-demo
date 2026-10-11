@@ -1701,7 +1701,13 @@ document.addEventListener('visibilitychange', () => {
 });
 
 async function start() {
-  authenticationEpoch++;
+  const owner = ++authenticationEpoch;
+  const current = () => owner === authenticationEpoch;
+  // Retry starts a fresh owner session even when the endpoint or library IDs
+  // are unchanged. Invalidate pending navigation and all personalized caches.
+  navigationEpoch++; searchEpoch++; notificationReadEpoch++;
+  state.game = null; state.notifications = null; state.languages = {};
+  state.search = { query: '', kind: 'game', result: null };
   translationRequested.clear();
   prices?.clear(); priceImport?.reset(); priceImportRefreshPending = false; clearTimeout(priceSearchTimer);
   cancelDeliveryDiagnostics({ clear: true });
@@ -1711,7 +1717,8 @@ async function start() {
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
   searchController?.abort();
-  feed.cancel();
+  feed.setFilters({}, { force: true });
+  feedLibraryKey = '';
   filterPreview.cancel({ clear: true });
   recap.cancel();
   recap.setFilters({}, { force: true });
@@ -1729,18 +1736,24 @@ async function start() {
   appRoot.innerHTML = shell(state.route, state.bootstrap);
   setMain(loadingState('Подключаемся к приложению…'));
   try {
-    state.config = await loadRuntimeConfig();
+    const config = await loadRuntimeConfig();
+    if (!current()) return;
+    state.config = config;
     if (state.config.remote) {
-      if (!await loadTelegramSDK()) throw new ApiError('Не удалось загрузить компоненты Telegram. Проверьте соединение и повторите попытку.', 'telegram_unavailable');
+      const sdkLoaded = await loadTelegramSDK();
+      if (!current()) return;
+      if (!sdkLoaded) throw new ApiError('Не удалось загрузить компоненты Telegram. Проверьте соединение и повторите попытку.', 'telegram_unavailable');
       telegram.init();
       setMain(loadingState('Подтверждаем профиль Telegram…'));
     }
     api.configure(state.config, telegram.rawInitData, () => loadRuntimeConfig());
     await syncBootstrap();
+    if (!current()) return;
     appRoot.innerHTML = shell(state.route, state.bootstrap);
     telegram.init();
     await loadRoute({ focus: false });
   } catch (error) {
+    if (!current()) return;
     if (state.config?.remote || !state.config) appRoot.innerHTML = connectionScreen(error, state.config || { botURL: 'https://t.me/my_steam_radar_dm_bot' });
     else setMain(errorState(error.message));
   }
