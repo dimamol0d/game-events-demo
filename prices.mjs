@@ -70,6 +70,15 @@ export function expectedPriceRegion(snapshot) {
     || typeof version !== 'string' || !version.trim()) return null;
   return { country, version };
 }
+export function bulkPriceRule(draft) {
+  if (draft.mode === 'disabled') return { rule: { enabled: false } };
+  if (draft.mode === 'any') return { rule: { enabled: true, mode: 'any' } };
+  if (draft.mode !== 'percent') return { error: 'Выберите условие скидки.' };
+  const text = String(draft.percent ?? '').trim();
+  if (!/^\d{1,3}$/.test(text) || Number(text) < 1 || Number(text) > 100) return { error: 'Скидка должна быть от 1 до 100%.' };
+  return { rule: { enabled: true, mode: 'percent', percent: Number(text) } };
+}
+const newBulkState = () => ({ open: false, selected: new Set(), mode: 'any', percent: '50', region: null, message: '' });
 function validHistoryDate(value) { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
 export function validatePriceHistory(value, appId, snapshot) {
   const region = expectedPriceRegion(snapshot); const currency = regionCurrency(snapshot);
@@ -103,7 +112,7 @@ export function validatePriceHistory(value, appId, snapshot) {
   return value;
 }
 export function createPriceTools() {
-  const state = { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), histories: new Map(), removeId: null };
+  const state = { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), histories: new Map(), removeId: null, bulk: newBulkState() };
   let generation = 0; let readEpoch = 0; let searchEpoch = 0; let readController; let searchController;
   function cancelRead() { readEpoch++; readController?.abort(); readController = null; state.loading = false; }
   function cancelSearch() { searchEpoch++; searchController?.abort(); searchController = null; state.searching = false; }
@@ -135,9 +144,15 @@ export function createPriceTools() {
       const monetary = draft.mode === 'price' || oldRule?.mode === 'price' || newRule?.mode === 'price';
       if (regionChanged && monetary || !newRule || !draft.dirty && JSON.stringify(oldRule) !== JSON.stringify(newRule)) state.drafts.delete(id);
     }
+    const ids = new Set(snapshot.items.map(value => value.app_id));
+    for (const id of state.bulk.selected) if (!ids.has(id)) state.bulk.selected.delete(id);
+    if (previous && regionChanged) {
+      if (state.bulk.selected.size) state.bulk.message = 'Регион изменился. Выберите игры заново перед применением общего условия.';
+      state.bulk.selected.clear(); state.bulk.region = null;
+    }
     state.snapshot = snapshot; state.loaded = true; state.country = snapshot.settings.country || ''; state.removeId = null;
   }
-  function clear() { generation++; cancel(); Object.assign(state, { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), histories: new Map(), removeId: null }); }
+  function clear() { generation++; cancel(); Object.assign(state, { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), histories: new Map(), removeId: null, bulk: newBulkState() }); }
   async function load(fetcher, current, changed = () => {}, { background = false } = {}) {
     if (state.busy) return false;
     cancelRead(); const epoch = readEpoch; const owner = generation; readController = new AbortController(); const signal = readController.signal;
@@ -158,12 +173,12 @@ export function createPriceTools() {
     catch (error) { if (valid()) state.searchError = error.message || 'Не удалось найти игру.'; }
     finally { if (owner === generation && epoch === searchEpoch) { state.searching = false; searchController = null; if (current()) changed(); } }
   }
-  async function write(task, current, changed = () => {}, message = 'Сохранено.') {
+  async function write(task, current, changed = () => {}, message = 'Сохранено.', { failureHelp = 'Обновите список и проверьте результат; повторное добавление не создаст дубликат.' } = {}) {
     if (state.busy || state.loading) return false;
     const owner = generation; cancel(); state.busy = true; state.error = ''; state.message = 'Сохраняем…'; changed();
     let saved = false;
     try { const snapshot = await task(); if (owner === generation && current()) { accept(snapshot); state.message = message; saved = true; } }
-    catch (error) { if (owner === generation && current()) { state.error = `Не удалось подтвердить сохранение. ${error.message || 'Ответ потерялся.'} Обновите список и проверьте результат; повторное добавление не создаст дубликат.`; state.message = ''; } }
+    catch (error) { if (owner === generation && current()) { state.error = `Не удалось подтвердить сохранение. ${error.message || 'Ответ потерялся.'} ${failureHelp}`; state.message = ''; } }
     finally { if (owner === generation) { state.busy = false; if (current()) changed(); } }
     return saved;
   }
@@ -208,5 +223,30 @@ export function createPriceTools() {
     const id = Number(appId); if (!state.drafts.has(id)) { const rule = item(id)?.rule || {}; state.drafts.set(id, { enabled: rule.enabled !== false, mode: modes.has(rule.mode) ? rule.mode : 'any', percent: String(rule.percent || 50), price: rule.needs_confirmation ? '' : priceInput(rule.price_minor) }); }
     return state.drafts.get(id);
   }
-  return { state, cancel, cancelSearch, clear, accept, load, search, write, item, draft, history, closeHistory, loadHistory };
+  function toggleBulk(appId, selected) {
+    const id = Number(appId);
+    if (!state.bulk.open || state.busy || state.loading || !validAppId(id) || !item(id)) return false;
+    if (selected) {
+      if (state.bulk.selected.size >= PRICE_LIST_LIMIT && !state.bulk.selected.has(id)) return false;
+      if (!state.bulk.selected.size) state.bulk.region = expectedPriceRegion(state.snapshot);
+      state.bulk.selected.add(id);
+    } else state.bulk.selected.delete(id);
+    state.bulk.message = ''; return true;
+  }
+  function selectAllBulk() {
+    if (!state.bulk.open || state.busy || state.loading) return;
+    state.bulk.region = expectedPriceRegion(state.snapshot);
+    state.bulk.selected = new Set((state.snapshot?.items || []).map(value => value.app_id)); state.bulk.message = '';
+  }
+  function bulkRequest() {
+    const appIds = [...state.bulk.selected];
+    if (!appIds.length) return { error: 'Выберите игры в списке ниже.' };
+    if (appIds.length > PRICE_LIST_LIMIT || appIds.some(id => !validAppId(id) || !item(id))) return { error: 'Список игр изменился. Обновите его и выберите игры заново.' };
+    if (appIds.some(id => state.drafts.get(id)?.dirty)) return { error: 'У выбранных игр есть несохранённые личные условия. Сначала сохраните их или снимите выбор с этих игр.' };
+    const expectedRegion = expectedPriceRegion(state.snapshot);
+    if (!expectedRegion || state.bulk.region?.country !== expectedRegion.country || state.bulk.region?.version !== expectedRegion.version) return { error: 'Регион изменился или не подтверждён. Обновите список и выберите игры заново.' };
+    const parsed = bulkPriceRule(state.bulk); if (parsed.error) return parsed;
+    return { appIds, rule: parsed.rule, expectedRegion };
+  }
+  return { state, cancel, cancelSearch, clear, accept, load, search, write, item, draft, history, closeHistory, loadHistory, toggleBulk, selectAllBulk, bulkRequest };
 }
