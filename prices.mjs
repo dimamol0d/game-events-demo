@@ -1,5 +1,29 @@
 export const PRICE_LIST_LIMIT = 30;
 const modes = new Set(['any', 'percent', 'price']);
+const validAppId = value => Number.isSafeInteger(value) && value > 0 && value <= 4294967295;
+
+function validatePriceSnapshot(snapshot) {
+  const invalid = () => { throw new Error('Сервер не подтвердил список скидок. Обновите его.'); };
+  const settings = snapshot?.settings;
+  if (!settings || !Array.isArray(snapshot.items) || snapshot.items.length > PRICE_LIST_LIMIT || !Array.isArray(settings.regions)
+      || settings.regions.some(region => !region || !/^[a-z]{2}$/.test(region.country || '') || !/^[A-Z]{3}$/.test(region.currency || ''))
+      || settings.country != null && !settings.regions.some(region => region.country === settings.country)) invalid();
+  const ids = new Set();
+  for (const item of snapshot.items) {
+    if (!validAppId(item?.app_id) || ids.has(item.app_id) || typeof item.name !== 'string' || !item.name.trim()
+        || !item.rule || typeof item.rule.enabled !== 'boolean' || !modes.has(item.rule.mode)
+        || !Number.isSafeInteger(item.rule.percent) || item.rule.percent < 1 || item.rule.percent > 100) invalid();
+    ids.add(item.app_id);
+  }
+  return snapshot;
+}
+
+function validatePriceSearch(value) {
+  if (!Array.isArray(value?.games) || value.games.some(game => !validAppId(game?.app_id) || typeof game.name !== 'string' || !game.name.trim())) {
+    throw new Error('Сервер не подтвердил результаты поиска. Повторите поиск.');
+  }
+  return value;
+}
 
 export function minorUnits(value) {
   const text = String(value ?? '').trim().replace(',', '.');
@@ -36,12 +60,13 @@ export function priceRule(draft, currency, { needsConfirmation = false } = {}) {
   return { rule: result };
 }
 export function regionCurrency(snapshot) {
-  return snapshot?.settings?.regions?.find(item => item.country === snapshot.settings.country)?.currency || '';
+  const regions = snapshot?.settings?.regions;
+  return Array.isArray(regions) ? regions.find(item => item?.country === snapshot.settings.country)?.currency || '' : '';
 }
 export function expectedPriceRegion(snapshot) {
   const settings = snapshot?.settings;
   const country = settings?.country; const version = settings?.region_version;
-  if (!/^[a-z]{2}$/.test(String(country || '')) || !settings?.regions?.some(region => region.country === country)
+  if (!/^[a-z]{2}$/.test(String(country || '')) || !Array.isArray(settings?.regions) || !settings.regions.some(region => region?.country === country)
     || typeof version !== 'string' || !version.trim()) return null;
   return { country, version };
 }
@@ -90,7 +115,7 @@ export function createPriceTools() {
   function cancelHistories() { for (const entry of state.histories.values()) cancelHistory(entry); }
   function cancel() { cancelRead(); cancelSearch(); cancelHistories(); }
   function accept(snapshot) {
-    if (!snapshot?.settings || !Array.isArray(snapshot.items) || !Array.isArray(snapshot.settings.regions)) throw new Error('Сервер не подтвердил список скидок. Обновите его.');
+    validatePriceSnapshot(snapshot);
     const previous = state.snapshot;
     const regionChanged = previous?.settings.country !== snapshot.settings.country
       || previous?.settings.region_version !== snapshot.settings.region_version;
@@ -108,18 +133,18 @@ export function createPriceTools() {
       const oldRule = previous?.items.find(value => Number(value.app_id) === id)?.rule;
       const newRule = snapshot.items.find(value => Number(value.app_id) === id)?.rule;
       const monetary = draft.mode === 'price' || oldRule?.mode === 'price' || newRule?.mode === 'price';
-      if (regionChanged && monetary || !newRule || JSON.stringify(oldRule) !== JSON.stringify(newRule)) state.drafts.delete(id);
+      if (regionChanged && monetary || !newRule || !draft.dirty && JSON.stringify(oldRule) !== JSON.stringify(newRule)) state.drafts.delete(id);
     }
     state.snapshot = snapshot; state.loaded = true; state.country = snapshot.settings.country || ''; state.removeId = null;
   }
   function clear() { generation++; cancel(); Object.assign(state, { snapshot: null, loading: false, loaded: false, busy: false, error: '', message: '', country: '', query: '', kind: 'game', searchResult: null, searching: false, searchError: '', drafts: new Map(), histories: new Map(), removeId: null }); }
-  async function load(fetcher, current, changed = () => {}) {
-    if (state.busy) return;
+  async function load(fetcher, current, changed = () => {}, { background = false } = {}) {
+    if (state.busy) return false;
     cancelRead(); const epoch = readEpoch; const owner = generation; readController = new AbortController(); const signal = readController.signal;
     const valid = () => owner === generation && epoch === readEpoch && !signal.aborted && current();
-    state.loading = true; state.error = ''; changed();
-    try { const snapshot = await fetcher(signal); if (valid()) accept(snapshot); }
-    catch (error) { if (valid()) state.error = error.message || 'Не удалось получить цены.'; }
+    state.loading = !background; state.error = ''; changed();
+    try { const snapshot = await fetcher(signal); if (!valid()) return false; accept(snapshot); return true; }
+    catch (error) { if (valid()) state.error = error.message || 'Не удалось получить цены.'; return false; }
     finally { if (owner === generation && epoch === readEpoch) { state.loading = false; readController = null; if (current()) changed(); } }
   }
   async function search(fetcher, current, changed = () => {}) {
@@ -129,7 +154,7 @@ export function createPriceTools() {
     searchController = new AbortController(); const signal = searchController.signal;
     const valid = () => owner === generation && epoch === searchEpoch && !signal.aborted && query === state.query.trim() && kind === state.kind && current();
     state.searching = true; changed();
-    try { const result = await fetcher(query, kind, signal); if (valid()) state.searchResult = result; }
+    try { const result = await fetcher(query, kind, signal); if (valid()) state.searchResult = validatePriceSearch(result); }
     catch (error) { if (valid()) state.searchError = error.message || 'Не удалось найти игру.'; }
     finally { if (owner === generation && epoch === searchEpoch) { state.searching = false; searchController = null; if (current()) changed(); } }
   }

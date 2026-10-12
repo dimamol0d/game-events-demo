@@ -1,5 +1,5 @@
-import { escapeHTML as h, formatDate } from './model.mjs?v=20261012-wishlistsync1';
-import { expectedPriceRegion, PRICE_LIST_LIMIT } from './prices.mjs?v=20261012-wishlistsync1';
+import { escapeHTML as h, formatDate } from './model.mjs?v=20261012-syncaudit1';
+import { expectedPriceRegion, PRICE_LIST_LIMIT } from './prices.mjs?v=20261012-syncaudit1';
 
 const validId = id => Number.isSafeInteger(id) && id > 0 && id <= 4294967295;
 const validToken = token => /^[a-f0-9]{64}$/.test(token || '');
