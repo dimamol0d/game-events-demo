@@ -765,6 +765,24 @@ html[data-theme=dark] .price-chart-point { fill: #96b5f8; }
 .price-steam-import legend { font-weight: 600; font-size: .92rem; }
 .price-steam-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 html[data-theme=dark] .price-steam-game .price-steam-known { color: #96b5f8; }
+.wishlist-sync { margin: 22px 0; padding: 20px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.wishlist-sync h3 { margin: 0; font-size: 1.1rem; }
+.wishlist-sync .section-heading { gap: 12px; flex-wrap: wrap; }
+.wishlist-sync .subtle { font-size: .82rem; line-height: 1.65; }
+.wishlist-sync-state { color: var(--muted); font-size: .8rem; }
+.wishlist-sync fieldset { border: 0; margin: 18px 0; padding: 0; min-width: 0; }
+.wishlist-sync .schedule-field { max-width: 440px; margin: 15px 0; }
+.wishlist-sync-draft, .wishlist-sync-selection { font-size: .8rem; color: var(--muted); }
+.wishlist-sync-times { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; margin: 20px 0; font-size: .78rem; }
+.wishlist-sync-times dt { color: var(--muted); margin-bottom: 6px; }
+.wishlist-sync-times dd { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.wishlist-sync-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.wishlist-sync-pending { margin-top: 25px; }
+.wishlist-sync-pending h4 { margin: 0 0 12px; font-size: 1rem; }
+.wishlist-sync-game { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.wishlist-sync-game .price-steam-game { border-bottom: 0; padding-bottom: 9px; }
+.wishlist-sync-game-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-left: 32px; }
+.wishlist-sync-game-actions > .text-link { font-size: .78rem; }
 @media (max-width: 600px) {
   .library-prices-entry { padding: 17px; }
   .price-region form { align-items: stretch; flex-direction: column; }
@@ -782,4 +800,8 @@ html[data-theme=dark] .price-steam-game .price-steam-known { color: #96b5f8; }
   .price-steam-import { padding: 13px; }
   .price-steam-actions .button { min-height: 44px; }
   .price-wishlist .section-heading > [data-action="price-steam-open"] { width: 100%; }
+  .wishlist-sync-times { grid-template-columns: 1fr; gap: 12px; }
+  .wishlist-sync-actions .button, .wishlist-sync-game-actions > *, .wishlist-sync [type="submit"] { min-height: 44px; }
+  .wishlist-sync-game-actions > .text-link { display: inline-flex; align-items: center; }
+  .wishlist-sync .schedule-field { max-width: none; }
 }

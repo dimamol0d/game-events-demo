@@ -215,6 +215,11 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     prices: signal => request('/api/prices', { signal }),
     steamWishlist: (offset = 0, signal) => request(`/api/prices/steam/wishlist?${new URLSearchParams({ offset })}`, { signal }),
     importSteamWishlist: payload => request('/api/prices/steam/import', { method: 'POST', body: payload }),
+    wishlistSync: (offset = 0, signal) => request(`/api/prices/steam/sync?${new URLSearchParams({ offset })}`, { signal }),
+    saveWishlistSync: payload => request('/api/prices/steam/sync', { method: 'PUT', body: payload }),
+    checkWishlistSync: payload => request('/api/prices/steam/sync/check', { method: 'POST', body: payload }),
+    selectWishlistSync: payload => request('/api/prices/steam/sync/select', { method: 'POST', body: payload }),
+    dismissWishlistSync: payload => request('/api/prices/steam/sync/dismiss', { method: 'POST', body: payload }),
     priceHistory: (appId, signal) => {
       const id = Number(appId);
       if (!['number', 'string'].includes(typeof appId) || !/^\d+$/.test(String(appId)) || !Number.isSafeInteger(id) || id < 1 || id > 4294967295) throw new ApiError('Для истории нужен корректный Steam AppID.');
