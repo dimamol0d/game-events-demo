@@ -19,7 +19,7 @@ export function resolveConfig(value = {}, pageURL = globalThis.location?.href) {
   return { backendURL, botURL, remote: Boolean(backendURL && backendURL !== page.origin) || !localPage, configured: Boolean(backendURL) || localPage };
 }
 
-export async function loadRuntimeConfig(fetchImpl = globalThis.fetch, pageURL = globalThis.location?.href, { timeoutMs = 10000, clock = Date.now } = {}) {
+export async function loadRuntimeConfig(fetchImpl = globalThis.fetch, pageURL = globalThis.location?.href, { timeoutMs = 10000, clock = Date.now, failedBackendURL = '' } = {}) {
   const page = new URL(pageURL);
   const url = new URL('./runtime-config.json', pageURL);
   url.searchParams.set('_radar', String(clock()));
@@ -46,6 +46,10 @@ export async function loadRuntimeConfig(fetchImpl = globalThis.fetch, pageURL = 
         ...(source.headers ? { headers: source.headers } : {}) });
       if (!response.ok) continue;
       const config = resolveConfig(await response.json(), pageURL);
+      // During recovery a valid but stale CDN file must not hide a newer
+      // address in the remaining trusted sources. Initial loading keeps its
+      // normal source order; only the origin which just failed is excluded.
+      if (failedBackendURL && config.backendURL === failedBackendURL) continue;
       if (config.configured) return config;
     } catch (error) {
       if (error?.message === 'Адрес сервера приложения настроен неправильно.') throw error;

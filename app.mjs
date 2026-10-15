@@ -1,18 +1,18 @@
-import { api, ApiError } from './api.mjs?v=20261013-bulkdiscounts1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261013-bulkdiscounts1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261013-bulkdiscounts1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261013-bulkdiscounts1';
-import { loadRuntimeConfig } from './config.mjs?v=20261013-bulkdiscounts1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261013-bulkdiscounts1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261013-bulkdiscounts1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261013-bulkdiscounts1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261013-bulkdiscounts1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261013-bulkdiscounts1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261013-bulkdiscounts1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261013-bulkdiscounts1';
-import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261013-bulkdiscounts1';
-import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261013-bulkdiscounts1';
-import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261013-bulkdiscounts1';
+import { api, ApiError } from './api.mjs?v=20261014-reliability1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261014-reliability1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261014-reliability1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261014-reliability1';
+import { loadRuntimeConfig } from './config.mjs?v=20261014-reliability1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261014-reliability1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261014-reliability1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261014-reliability1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261014-reliability1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261014-reliability1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261014-reliability1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261014-reliability1';
+import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261014-reliability1';
+import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261014-reliability1';
+import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261014-reliability1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -865,7 +865,7 @@ async function verifySteamCallback() {
   try {
     if (steamCallback.error) throw new Error(steamCallback.error);
     state.config = await loadRuntimeConfig();
-    api.configure(state.config, () => '', () => loadRuntimeConfig());
+    api.configure(state.config, () => '', context => loadRuntimeConfig(undefined, undefined, context));
     await api.steamCallback({ query: steamCallback.query });
     // Retain no assertion after success. Even on a lost response the original
     // app can check the persisted connection without replaying the assertion.
@@ -1902,7 +1902,7 @@ async function start() {
       telegram.init();
       setMain(loadingState('Подтверждаем профиль Telegram…'));
     }
-    api.configure(state.config, telegram.rawInitData, () => loadRuntimeConfig());
+    api.configure(state.config, telegram.rawInitData, context => loadRuntimeConfig(undefined, undefined, context));
     await syncBootstrap();
     if (!current()) return;
     appRoot.innerHTML = shell(state.route, state.bootstrap);

@@ -53,7 +53,10 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
   }
 
   const endpoint = () => ({ backendURL: config.backendURL, remote: config.remote, generation });
-  const isTransportFailure = error => error instanceof ApiError && ['offline', 'timeout'].includes(error.code) && !error.status;
+  const isTransportFailure = error => error instanceof ApiError && (
+    !error.status && ['offline', 'timeout'].includes(error.code)
+    || [502, 503, 504].includes(error.status)
+  );
 
   async function recover(failedEndpoint, error, signal) {
     abortIfNeeded(signal);
@@ -70,7 +73,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
       let timeout;
       try {
         const limit = new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('config_timeout')), recoveryTimeoutMs); });
-        const next = await Promise.race([Promise.resolve().then(reload), limit]);
+        const next = await Promise.race([Promise.resolve().then(() => reload({ failedBackendURL: failedEndpoint.backendURL })), limit]);
         if (generation !== capturedGeneration) return config.backendURL !== failedEndpoint.backendURL;
         if (!next?.configured || !next.remote || typeof next.backendURL !== 'string' || !next.backendURL) return false;
         applyConfig(next);
