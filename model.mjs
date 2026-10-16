@@ -50,9 +50,18 @@ export function parseRoute(hash = '') {
 
 export function normalizeFeedFilters(value = {}) {
   const appId = Number(value.app_id);
+  const query = typeof value.q === 'string' ? value.q.replace(/^[\s\u0085]+|[\s\u0085]+$/gu, '') : '';
   return { kind: ['all', 'updates', 'news', 'builds'].includes(value.kind) ? value.kind : 'all',
     days: [0, 7, 30].includes(Number(value.days)) ? Number(value.days) : 7,
-    ...(Number.isSafeInteger(appId) && appId > 0 ? { app_id: appId } : {}) };
+    ...(Number.isSafeInteger(appId) && appId > 0 ? { app_id: appId } : {}),
+    ...(query ? { q: query } : {}) };
+}
+
+export function feedQueryError(query) {
+  if (typeof query !== 'string') return 'Введите слово или фразу для поиска.';
+  if ([...query].length > 120) return 'Поисковый запрос слишком длинный. Максимум 120 символов.';
+  if (/[\u0000-\u001f\u007f]/.test(query)) return 'Поисковый запрос должен быть одной строкой без управляющих символов.';
+  return '';
 }
 
 // The feed is a read-only snapshot: changing filters or leaving the page

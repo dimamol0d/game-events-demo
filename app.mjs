@@ -1,18 +1,18 @@
-import { api, ApiError } from './api.mjs?v=20261014-reliability1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261014-reliability1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261014-reliability1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261014-reliability1';
-import { loadRuntimeConfig } from './config.mjs?v=20261014-reliability1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261014-reliability1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261014-reliability1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261014-reliability1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261014-reliability1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261014-reliability1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261014-reliability1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261014-reliability1';
-import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261014-reliability1';
-import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261014-reliability1';
-import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261014-reliability1';
+import { api, ApiError } from './api.mjs?v=20261016-historysearch1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261016-historysearch1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261016-historysearch1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261016-historysearch1';
+import { loadRuntimeConfig } from './config.mjs?v=20261016-historysearch1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261016-historysearch1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261016-historysearch1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261016-historysearch1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261016-historysearch1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261016-historysearch1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261016-historysearch1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261016-historysearch1';
+import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261016-historysearch1';
+import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261016-historysearch1';
+import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261016-historysearch1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -55,6 +55,7 @@ const feed = createFeedPager((filters, signal) => api.libraryFeed(filters, signa
   if (state.route.page === 'feed') renderFeed();
 });
 let feedLibraryKey = '';
+let feedQueryDraft = '';
 const bulk = createBulkSelection();
 let bulkCollectionId = null;
 const filterPreview = createToolRead((payload, signal) => api.previewPreferences(payload, signal), drawFilterPreview);
@@ -647,11 +648,28 @@ async function saveBulkPreferences(form) {
 
 function renderFeed({ focus = false } = {}) {
   if (state.route.page !== 'feed') return;
-  const activeId = document.activeElement?.closest('#feed-filters') ? document.activeElement.id : null;
+  const active = document.activeElement;
+  const activeId = active?.closest('#feed-filters') ? active.id : null;
+  const selection = activeId === 'feed-query' && typeof active.selectionStart === 'number'
+    ? [active.selectionStart, active.selectionEnd, active.selectionDirection] : null;
   const scroll = window.scrollY;
-  setMain(feedPage(feed.state, state.bootstrap.library), focus);
-  if (activeId) document.getElementById(activeId)?.focus({ preventScroll: true });
+  setMain(feedPage({ ...feed.state, queryDraft: feedQueryDraft }, state.bootstrap.library), focus);
+  if (activeId) {
+    const restored = document.getElementById(activeId);
+    restored?.focus({ preventScroll: true });
+    if (selection) restored?.setSelectionRange?.(...selection);
+  }
   window.scrollTo({ top: scroll, behavior: 'instant' });
+}
+
+async function applyFeedSearch(form) {
+  if (state.route.page !== 'feed' || !state.bootstrap?.library.length) return;
+  feedQueryDraft = form.elements.q?.value ?? feedQueryDraft;
+  const message = feedQueryError(feedQueryDraft);
+  if (message) { toast(message); return; }
+  const changed = feed.setFilters({ kind: form.elements.kind.value, days: form.elements.days.value,
+    app_id: form.elements.app_id.value, q: feedQueryDraft });
+  if (changed || !feed.state.loaded || feed.state.error) await feed.load();
 }
 
 function toast(message) {
@@ -1429,7 +1447,13 @@ document.addEventListener('click', async event => {
     if (action === 'feed-more') await feed.load({ more: true });
     else if (action === 'feed-retry') await feed.load({ more: feed.state.errorIsMore });
     else if (action === 'feed-refresh') await feed.load();
-    else if (action === 'feed-all') { feed.setFilters({ kind: 'all', days: 0 }); await feed.load(); }
+    else if (action === 'feed-all') { feed.setFilters({ kind: 'all', days: 0, q: feed.state.filters.q }); await feed.load(); }
+    else if (action === 'feed-clear-search') {
+      feedQueryDraft = '';
+      if (feed.setFilters({ ...feed.state.filters, q: '' })) await feed.load();
+      else renderFeed();
+      document.getElementById('feed-query')?.focus({ preventScroll: true });
+    }
     return;
   }
   if (action === 'library-transfer-open') {
@@ -1587,6 +1611,7 @@ document.addEventListener('click', async event => {
 });
 
 document.addEventListener('input', event => {
+  if (event.target.id === 'feed-query' && state.route.page === 'feed') { feedQueryDraft = event.target.value; return; }
   if (state.route.page === 'prices') {
     const tools = priceTools();
     const bulkForm = event.target.closest('#price-bulk-form');
@@ -1693,8 +1718,8 @@ document.addEventListener('change', async event => {
   }
   const feedForm = event.target.closest('#feed-filters');
   if (feedForm) {
-    if (state.route.page !== 'feed') return;
-    if (feed.setFilters({ kind: feedForm.elements.kind.value, days: feedForm.elements.days.value, app_id: feedForm.elements.app_id.value })) await feed.load();
+    if (state.route.page !== 'feed' || event.target.name === 'q') return;
+    await applyFeedSearch(feedForm);
     return;
   }
   if (event.target.id === 'library-transfer-file') {
@@ -1771,7 +1796,7 @@ document.addEventListener('submit', async event => {
     recap.setFilters({ app_id: form.elements.app_id.value, period: form.elements.period.value, days: form.elements.period.value, since: form.elements.since.value, news: form.elements.news.checked, builds: form.elements.builds.checked });
     await recap.load(); return;
   }
-  if (event.target.id === 'feed-filters') { event.preventDefault(); return; }
+  if (event.target.id === 'feed-filters') { event.preventDefault(); await applyFeedSearch(event.target); return; }
   if (event.target.id === 'library-transfer-form') { event.preventDefault(); transfer.input = event.target.querySelector('#library-transfer-input').value; previewTransfer(); return; }
   if (event.target.id === 'search-form') { event.preventDefault(); await runSearch(); }
   if (event.target.id === 'delivery-schedule-form') {
@@ -1875,6 +1900,7 @@ async function start() {
   searchController?.abort();
   feed.setFilters({}, { force: true });
   feedLibraryKey = '';
+  feedQueryDraft = '';
   filterPreview.cancel({ clear: true });
   recap.cancel();
   recap.setFilters({}, { force: true });

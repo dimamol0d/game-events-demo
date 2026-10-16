@@ -181,7 +181,16 @@ main { max-width: 1380px; margin: 0 auto; padding: 39px 42px 70px; }
 .feed-entry-action .icon { transform: rotate(180deg); width: 16px; height: 16px; }
 .feed-filters { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .feed-filter { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--muted); font-size: .82rem; }
-.feed-filter select { display: block; width: 100%; min-width: 0; min-height: 46px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.feed-filter select, .feed-filter input { display: block; width: 100%; min-width: 0; min-height: 46px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.feed-search { grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 12px; min-width: 0; }
+.feed-search-field { flex: 1; }
+.feed-search-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.feed-search-help { grid-column: 1 / -1; margin: -5px 0 0; max-width: 85ch; color: var(--muted); font-size: .79rem; }
+.feed-search-context { font-size: .86rem; font-weight: 600; margin: 0 0 22px; overflow-wrap: anywhere; }
+.feed-search-match { padding: 12px 15px; margin-bottom: 10px; border-left: 3px solid var(--focus); border-radius: 0 7px 7px 0; background: var(--subtle-surface); }
+.feed-search-source { margin: 0 0 6px; color: var(--muted); font-size: .75rem; }
+.feed-search-excerpt { margin: 0; font-size: .86rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.feed-search-excerpt mark { background: #ffdf91; color: #223244; padding: 0 2px; border-radius: 2px; }
 .feed-explanation { color: var(--muted); font-size: .82rem; max-width: 75ch; margin: 17px 0 27px; }
 .feed-timeline { display: grid; gap: 27px; }
 .feed-item { min-width: 0; }
@@ -196,6 +205,11 @@ main { max-width: 1380px; margin: 0 auto; padding: 39px 42px 70px; }
   .feed-filter:first-child { grid-column: 1 / -1; }
   .feed-filter { font-size: .76rem; }
   .feed-filter select { font-size: .81rem; }
+  .feed-filter input { font-size: 1rem; }
+  .feed-search { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .feed-search-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .feed-search-actions .button { min-width: 0; }
+  .feed-search-help { font-size: .76rem; }
   .feed-explanation { font-size: .77rem; }
 }
 .library-transfer { padding: 24px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; margin-bottom: 26px; }
