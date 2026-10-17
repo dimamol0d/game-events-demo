@@ -1,18 +1,18 @@
-import { api, ApiError } from './api.mjs?v=20261016-historysearch1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261016-historysearch1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261016-historysearch1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261016-historysearch1';
-import { loadRuntimeConfig } from './config.mjs?v=20261016-historysearch1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261016-historysearch1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261016-historysearch1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261016-historysearch1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261016-historysearch1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261016-historysearch1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261016-historysearch1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261016-historysearch1';
-import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261016-historysearch1';
-import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261016-historysearch1';
-import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261016-historysearch1';
+import { api, ApiError } from './api.mjs?v=20261018-library1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261018-library1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261018-library1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261018-library1';
+import { loadRuntimeConfig } from './config.mjs?v=20261018-library1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261018-library1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261018-library1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261018-library1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261018-library1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261018-library1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261018-library1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261018-library1';
+import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261018-library1';
+import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261018-library1';
+import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261018-library1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -682,10 +682,20 @@ function toast(message) {
 function main() { return document.querySelector('#main-content'); }
 function setMain(html, focus = false) {
   const schedule = main().querySelector('.delivery-schedule[open]');
+  const closedLibraryDelivery = main().querySelector('#library-delivery-details:not([open])');
   const transferPanel = main().querySelector('#library-transfer:not([hidden])');
+  const libraryDetails = ['library-management', 'library-delivery-details'].filter(id => main().querySelector(`#${id}[open]`));
   const active = schedule?.contains(document.activeElement) || transferPanel?.contains(document.activeElement) ? document.activeElement : null;
   main().innerHTML = html;
-  if (schedule) main().querySelector('.delivery-schedule')?.replaceWith(schedule);
+  for (const id of libraryDetails) { const details = main().querySelector(`#${id}`); if (details) details.open = true; }
+  if (schedule) {
+    const slot = main().querySelector('.delivery-schedule');
+    if (slot) {
+      slot.replaceWith(schedule);
+      const disclosure = schedule.closest('#library-delivery-details');
+      if (disclosure && !closedLibraryDelivery) disclosure.open = true;
+    }
+  }
   if (transferPanel && main().querySelector('#library-transfer')) main().querySelector('#library-transfer').replaceWith(transferPanel);
   drawTransfer();
   drawSteam();
@@ -1152,6 +1162,12 @@ function scheduleGamePoll(epoch, delay = 4500) {
   }, delay);
 }
 
+function overviewToolsOpen() {
+  const schedule = document.querySelector('.delivery-schedule[open]');
+  return document.querySelector('#library-management[open], #library-delivery-details[open], #library-transfer:not([hidden]), #steam-panel:not([hidden])')
+    || schedule && !schedule.closest('#library-delivery-details:not([open])');
+}
+
 function scheduleOverviewPoll(epoch, delay = 5000) {
   clearTimeout(overviewPollTimer);
   if (!state.bootstrap || !['home', 'library', 'inbox'].includes(state.route.page) || document.hidden) return;
@@ -1162,11 +1178,11 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
   if (!pending) return;
   overviewPollTimer = setTimeout(async () => {
     if (epoch !== navigationEpoch || document.hidden) return;
-    if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden]), #steam-panel:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
+    if (overviewToolsOpen()) { scheduleOverviewPoll(epoch, 10000); return; }
     try {
       await syncBootstrap();
       if (epoch !== navigationEpoch) return;
-      if (document.querySelector('.delivery-schedule[open], #library-transfer:not([hidden]), #steam-panel:not([hidden])')) { scheduleOverviewPoll(epoch, 10000); return; }
+      if (overviewToolsOpen()) { scheduleOverviewPoll(epoch, 10000); return; }
       const scroll = window.scrollY;
       if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
       else if (state.route.page === 'library') setMain(currentLibraryPage());
