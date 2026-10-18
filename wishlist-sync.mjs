@@ -1,5 +1,5 @@
-import { escapeHTML as h, formatDate } from './model.mjs?v=20261018-bootstrap1';
-import { expectedPriceRegion, PRICE_LIST_LIMIT } from './prices.mjs?v=20261018-bootstrap1';
+import { escapeHTML as h, formatDate } from './model.mjs?v=20261019-resume1';
+import { expectedPriceRegion, PRICE_LIST_LIMIT } from './prices.mjs?v=20261019-resume1';
 
 const validId = id => Number.isSafeInteger(id) && id > 0 && id <= 4294967295;
 const validToken = token => /^[a-f0-9]{64}$/.test(token || '');

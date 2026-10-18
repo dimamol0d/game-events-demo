@@ -1,18 +1,18 @@
-import { api, ApiError } from './api.mjs?v=20261018-bootstrap1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261018-bootstrap1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261018-bootstrap1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261018-bootstrap1';
-import { loadRuntimeConfig } from './config.mjs?v=20261018-bootstrap1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261018-bootstrap1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261018-bootstrap1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261018-bootstrap1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261018-bootstrap1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261018-bootstrap1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261018-bootstrap1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261018-bootstrap1';
-import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261018-bootstrap1';
-import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261018-bootstrap1';
-import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261018-bootstrap1';
+import { api, ApiError } from './api.mjs?v=20261019-resume1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261019-resume1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261019-resume1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261019-resume1';
+import { loadRuntimeConfig } from './config.mjs?v=20261019-resume1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261019-resume1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261019-resume1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261019-resume1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261019-resume1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261019-resume1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261019-resume1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261019-resume1';
+import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261019-resume1';
+import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261019-resume1';
+import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261019-resume1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -1242,7 +1242,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
     setMain(homePage(state.bootstrap, state.config), focus);
     if (force || Date.now() - bootstrapUpdatedAt > 5000) {
       try { await syncBootstrap(); if (epoch === navigationEpoch) setMain(homePage(state.bootstrap, state.config)); }
-      catch (error) { if (epoch === navigationEpoch) toast(error.message); }
+      catch (error) { if (epoch === navigationEpoch && !document.hidden) toast(error.message); }
     }
     scheduleOverviewPoll(epoch);
     refreshSteam({ preview: false });
@@ -1268,7 +1268,9 @@ async function loadRoute({ focus = true, force = false } = {}) {
     setMain(currentLibraryPage(), focus);
     if (force || Date.now() - bootstrapUpdatedAt > 5000) {
       try { await syncBootstrap(); if (epoch === navigationEpoch) setMain(currentLibraryPage()); }
-      catch (error) { if (epoch === navigationEpoch) setMain(errorState(error.message)); }
+      // The cached library is already usable. A failed refresh must not remove
+      // it or detach an open schedule/import draft while the user is editing.
+      catch (error) { if (epoch === navigationEpoch && !document.hidden) toast(error.message); }
     }
     scheduleOverviewPoll(epoch);
     if (epoch === navigationEpoch) refreshSteam({ preview: steam.open, autoOpen: true });
@@ -1904,6 +1906,15 @@ window.addEventListener('pagehide', () => { cancelDeliveryDiagnostics({ clear: t
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   telegram.init();
+  // BFCache restores the live form and pending save handler. Replacing it with
+  // server defaults here would silently discard the user's unsaved choices.
+  const restoredRoute = parseRoute(location.hash);
+  const restoredForm = document.querySelector('#preferences-form');
+  if (state.bootstrap && state.route.page === 'settings' && restoredRoute.page === 'settings'
+    && restoredRoute.appId === state.route.appId && Number(restoredForm?.dataset.appId) === restoredRoute.appId) {
+    updateNavigation();
+    return;
+  }
   if (state.bootstrap) loadRoute({ focus: false, force: true });
 });
 window.addEventListener('focus', () => {
