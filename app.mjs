@@ -1,18 +1,18 @@
-import { api, ApiError } from './api.mjs?v=20261018-library1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261018-library1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261018-library1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261018-library1';
-import { loadRuntimeConfig } from './config.mjs?v=20261018-library1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261018-library1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261018-library1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261018-library1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261018-library1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261018-library1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261018-library1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261018-library1';
-import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261018-library1';
-import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261018-library1';
-import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261018-library1';
+import { api, ApiError } from './api.mjs?v=20261018-bootstrap1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261018-bootstrap1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261018-bootstrap1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261018-bootstrap1';
+import { loadRuntimeConfig } from './config.mjs?v=20261018-bootstrap1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261018-bootstrap1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261018-bootstrap1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261018-bootstrap1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261018-bootstrap1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261018-bootstrap1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261018-bootstrap1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261018-bootstrap1';
+import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261018-bootstrap1';
+import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261018-bootstrap1';
+import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261018-bootstrap1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -33,6 +33,9 @@ let toastTimer;
 let gamePollTimer;
 let overviewPollTimer;
 let bootstrapUpdatedAt = 0;
+let bootstrapSequence = 0;
+let bootstrapAppliedSequence = 0;
+let deliveryScheduleRevision = 0;
 let libraryRevision = 0;
 const libraryMembershipChanges = new Map();
 const libraryChanges = new Map();
@@ -1046,8 +1049,18 @@ function updateNavigation() {
 async function syncBootstrap() {
   const owner = authenticationEpoch; const revision = collectionRevision; const libraryReadRevision = libraryRevision;
   const unreadReadRevision = unreadRevision;
-  const fresh = await api.bootstrap();
-  if (owner !== authenticationEpoch) return state.bootstrap;
+  const scheduleReadRevision = deliveryScheduleRevision;
+  const sequence = ++bootstrapSequence;
+  let fresh;
+  try { fresh = await api.bootstrap(); }
+  catch (error) {
+    if (owner !== authenticationEpoch || sequence < bootstrapAppliedSequence) return state.bootstrap;
+    throw error;
+  }
+  // Arrival order is not snapshot order. A newer successful read supersedes
+  // both data and errors from old reads.
+  // A newer failed read does not discard an older still-useful success.
+  if (owner !== authenticationEpoch || sequence < bootstrapAppliedSequence) return state.bootstrap;
   if (revision !== collectionRevision && state.bootstrap) fresh.collections = state.bootstrap.collections;
   else fresh.collections = preserveCollectionMembership(fresh.collections || [], libraryReadRevision);
   // Only rows changed after this read began override its snapshot. Confirmed
@@ -1055,7 +1068,14 @@ async function syncBootstrap() {
   // newly fetched data.
   preserveLibraryChanges(fresh, libraryReadRevision);
   if (unreadReadRevision !== unreadRevision && state.bootstrap) fresh.unread_count = state.bootstrap.unread_count;
+  if (scheduleReadRevision !== deliveryScheduleRevision && state.bootstrap?.delivery_status) {
+    fresh.delivery_status = { ...fresh.delivery_status, schedule: state.bootstrap.delivery_status.schedule,
+      // This read's estimate may belong to the previous schedule. A read
+      // started after the acknowledgement supplies the current estimate.
+      next_delivery_at: null };
+  }
   state.bootstrap = fresh;
+  bootstrapAppliedSequence = sequence;
   reconcileCollections();
   steamSelection.reconcile(state.bootstrap.library);
   bootstrapUpdatedAt = Date.now();
@@ -1830,9 +1850,14 @@ document.addEventListener('submit', async event => {
       const disabled = controls.map(control => control.disabled);
       controls.forEach(control => { control.disabled = true; });
       try {
+        const statusReadSequence = bootstrapAppliedSequence;
         const result = await api.saveDeliverySchedule(schedule);
         if (!currentOwner()) return;
-        state.bootstrap.delivery_status = result.delivery_status;
+        deliveryScheduleRevision++;
+        // A bootstrap accepted while this write was pending may already know
+        // about another delivery action. Its unrelated status fields stay fresh.
+        state.bootstrap.delivery_status = statusReadSequence === bootstrapAppliedSequence ? result.delivery_status
+          : { ...state.bootstrap.delivery_status, schedule: result.schedule, next_delivery_at: null };
         const caption = form.closest('details')?.querySelector('.schedule-caption');
         if (caption) caption.textContent = result.schedule.mode === 'digest' ? `Сводка в ${result.schedule.daily_time}` : 'Сразу после обнаружения';
         message.textContent = 'Расписание сохранено.';
