@@ -1,18 +1,18 @@
-import { api, ApiError } from './api.mjs?v=20261019-resume1';
-import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261019-resume1';
-import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261019-resume1';
-import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261019-resume1';
-import { loadRuntimeConfig } from './config.mjs?v=20261019-resume1';
-import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261019-resume1';
-import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261019-resume1';
-import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261019-resume1';
-import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261019-resume1';
-import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261019-resume1';
-import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261019-resume1';
-import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261019-resume1';
-import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261019-resume1';
-import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261019-resume1';
-import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261019-resume1';
+import { api, ApiError } from './api.mjs?v=20261019-foreground1';
+import { parseRoute, mergeEvents, preferencesForMode, eventMatchesId, createFeedPager, feedQueryError, MODES, TRANSLATION_MODES, escapeHTML as h } from './model.mjs?v=20261019-foreground1';
+import { shell, homePage, libraryPage, libraryGameRows, searchPage, searchResults, gamePage, settingsPage, inboxPage, feedPage, profilePage, steamPanel, steamSelectionRows, steamCallbackScreen, loadingState, errorState, connectionScreen, deliveryDiagnosticPanel } from './views.mjs?v=20261019-foreground1';
+import { createTelegramAdapter, loadTelegramSDK } from './telegram.mjs?v=20261019-foreground1';
+import { loadRuntimeConfig } from './config.mjs?v=20261019-foreground1';
+import { parseLibraryInput, serializeLibrary, importLibraryBatches, LIBRARY_FILE_LIMIT, LIBRARY_LIMIT } from './library-transfer.mjs?v=20261019-foreground1';
+import { consumeSteamCallback, safeSteamLoginURL, createSteamSelection, createSteamReadGuard } from './steam-import.mjs?v=20261019-foreground1';
+import { createBulkSelection, createToolRead, createRecapPager } from './library-tools.mjs?v=20261019-foreground1';
+import { bulkPage, bulkRows, bulkConfirmation, previewResult, recapPage, recapResults } from './library-tools-views.mjs?v=20261019-foreground1';
+import { createCollectionTools, normalizeCollectionName, collectionNameError } from './collections.mjs?v=20261019-foreground1';
+import { collectionsPage, collectionPage, collectionRows, gameCollectionsPage } from './collections-views.mjs?v=20261019-foreground1';
+import { createPriceTools, priceRule, regionCurrency, expectedPriceRegion } from './prices.mjs?v=20261019-foreground1';
+import { pricesPage, priceSearchResults, priceHistory, priceBulkPanel } from './prices-views.mjs?v=20261019-foreground1';
+import { createPriceSteamImport, priceSteamImportPanel } from './price-steam-import.mjs?v=20261019-foreground1';
+import { createWishlistSyncTools, wishlistSyncPanel } from './wishlist-sync.mjs?v=20261019-foreground1';
 
 // Clear the external assertion before runtime discovery, Telegram SDK loading
 // or authentication. The callback browser does not need a Telegram session.
@@ -32,6 +32,13 @@ let searchController;
 let toastTimer;
 let gamePollTimer;
 let overviewPollTimer;
+let pageRefreshTask = null;
+let foregroundRefreshTimer;
+let foregroundRefreshNeeded = false;
+let hiddenSince = null;
+let lastForegroundAttemptAt = -Infinity;
+let pageRefreshedAt = -Infinity;
+let routeReadPending = false;
 let bootstrapUpdatedAt = 0;
 let bootstrapSequence = 0;
 let bootstrapAppliedSequence = 0;
@@ -683,8 +690,11 @@ function toast(message) {
 }
 
 function main() { return document.querySelector('#main-content'); }
-function setMain(html, focus = false) {
-  const schedule = main().querySelector('.delivery-schedule[open]');
+function setMain(html, focus = false, { preserveClosedSchedule = false } = {}) {
+  // Keep a closed unsaved draft on automatic redraw, while an untouched closed
+  // form can receive fresh server settings. Navigation still keeps open forms.
+  const schedule = main().querySelector('.delivery-schedule[open]')
+    || (preserveClosedSchedule ? main().querySelector('.delivery-schedule[data-dirty="true"]') : null);
   const closedLibraryDelivery = main().querySelector('#library-delivery-details:not([open])');
   const transferPanel = main().querySelector('#library-transfer:not([hidden])');
   const libraryDetails = ['library-management', 'library-delivery-details'].filter(id => main().querySelector(`#${id}[open]`));
@@ -1025,10 +1035,10 @@ async function copyTransfer() {
   }
   document.querySelector('#library-transfer-message')?.replaceChildren(document.createTextNode(transfer.message));
 }
-async function readNotifications() {
+async function readNotifications({ signal, current: stillCurrent = () => true } = {}) {
   const read = ++notificationReadEpoch; const owner = authenticationEpoch;
-  const current = () => read === notificationReadEpoch && owner === authenticationEpoch;
-  try { const result = await api.notifications(); return current() ? result : null; }
+  const current = () => read === notificationReadEpoch && owner === authenticationEpoch && stillCurrent();
+  try { const result = await api.notifications(signal); return current() ? result : null; }
   catch (error) { if (current()) throw error; return null; }
 }
 function updateUnread(count) {
@@ -1046,21 +1056,21 @@ function updateNavigation() {
   telegram.updateBack(['game', 'settings', 'feed', 'profile', 'bulk', 'recap', 'collections', 'collection', 'game-lists', 'prices'].includes(state.route.page) ? () => { location.hash = ['settings', 'game-lists'].includes(state.route.page) ? `#game/${state.route.appId}` : state.route.page === 'collection' ? '#collections' : '#library'; } : null);
 }
 
-async function syncBootstrap() {
+async function syncBootstrap({ signal, current = () => true } = {}) {
   const owner = authenticationEpoch; const revision = collectionRevision; const libraryReadRevision = libraryRevision;
   const unreadReadRevision = unreadRevision;
   const scheduleReadRevision = deliveryScheduleRevision;
   const sequence = ++bootstrapSequence;
   let fresh;
-  try { fresh = await api.bootstrap(); }
+  try { fresh = await api.bootstrap(signal); }
   catch (error) {
-    if (owner !== authenticationEpoch || sequence < bootstrapAppliedSequence) return state.bootstrap;
+    if (owner !== authenticationEpoch || sequence < bootstrapAppliedSequence || !current()) return state.bootstrap;
     throw error;
   }
   // Arrival order is not snapshot order. A newer successful read supersedes
   // both data and errors from old reads.
   // A newer failed read does not discard an older still-useful success.
-  if (owner !== authenticationEpoch || sequence < bootstrapAppliedSequence) return state.bootstrap;
+  if (owner !== authenticationEpoch || sequence < bootstrapAppliedSequence || !current()) return state.bootstrap;
   if (revision !== collectionRevision && state.bootstrap) fresh.collections = state.bootstrap.collections;
   else fresh.collections = preserveCollectionMembership(fresh.collections || [], libraryReadRevision);
   // Only rows changed after this read began override its snapshot. Confirmed
@@ -1107,7 +1117,7 @@ function updateGameSummary(game, readRevision) {
   return game;
 }
 
-function renderGame({ focus = false, loadingMore = false } = {}) {
+function renderGame({ focus = false, loadingMore = false, queueTranslation = true } = {}) {
   if (!state.game || state.game.game.app_id !== state.route.appId) return;
   setMain(gamePage(state.game, state.bootstrap.library, state.route.eventId, loadingMore, state.languages), focus);
   if (focus && state.route.eventId) {
@@ -1115,7 +1125,7 @@ function renderGame({ focus = false, loadingMore = false } = {}) {
     const id = String(selected?.id || state.route.eventId).replace(/[^a-zA-Z0-9_-]/g, '_');
     document.getElementById('event-' + id)?.scrollIntoView({ block: 'start' });
   }
-  queueSelectedTranslation();
+  if (queueTranslation) queueSelectedTranslation();
 }
 
 function queueSelectedTranslation() {
@@ -1159,25 +1169,127 @@ async function requestTranslation(event, shortOnly = false) {
   }
 }
 
+function cancelPageRefresh({ retry = false, reset = false } = {}) {
+  if (pageRefreshTask) {
+    pageRefreshTask.controller.abort();
+    pageRefreshTask = null;
+    if (retry) foregroundRefreshNeeded = true;
+  }
+  clearTimeout(foregroundRefreshTimer);
+  if (reset) { foregroundRefreshNeeded = false; hiddenSince = null; lastForegroundAttemptAt = -Infinity; pageRefreshedAt = -Infinity; }
+}
+
+function refreshablePage() {
+  return state.bootstrap && !routeReadPending && ['home', 'library', 'inbox', 'game'].includes(state.route.page)
+    && (state.route.page !== 'inbox' || Boolean(state.notifications))
+    && (state.route.page !== 'game' || state.game?.game.app_id === state.route.appId);
+}
+
+function pageRefreshBlocked() {
+  return mutations.size > 0 || state.route.page !== 'game' && overviewToolsOpen();
+}
+
+// Automatic polling and foreground recovery share one cancellable read. The
+// guard runs before applying data, including between the inbox's two reads.
+async function refreshPage(epoch) {
+  if (!refreshablePage() || epoch !== navigationEpoch || document.hidden || globalThis.navigator?.onLine === false || pageRefreshBlocked()) return false;
+  const owner = authenticationEpoch;
+  if (pageRefreshTask?.epoch === epoch && pageRefreshTask.owner === owner) return pageRefreshTask.promise;
+  cancelPageRefresh();
+  const task = { epoch, owner, controller: new AbortController(), promise: null };
+  pageRefreshTask = task;
+  const signal = task.controller.signal;
+  const current = () => pageRefreshTask === task && epoch === navigationEpoch && owner === authenticationEpoch
+    && Boolean(state.bootstrap) && !document.hidden && !signal.aborted;
+  const page = state.route.page;
+  const appId = state.route.appId;
+  task.promise = (async () => {
+    try {
+      if (page === 'game') {
+        const index = state.game.events.findIndex(item => eventMatchesId(item, state.route.eventId));
+        const selectedOffset = Math.floor(Math.max(0, index) / 30) * 30;
+        const revision = libraryRevision;
+        const [fresh, selectedPage] = await Promise.all([api.game(appId, 0, signal),
+          selectedOffset ? api.game(appId, selectedOffset, signal) : Promise.resolve(null)]);
+        if (!current()) return false;
+        fresh.game = updateGameSummary(fresh.game, revision);
+        const merged = mergeEvents(state.game.events, [...fresh.events, ...(selectedPage?.events || [])])
+          .sort((a, b) => (Date.parse(b.sort_at || b.published_at || b.detected_at) || 0) - (Date.parse(a.sort_at || a.published_at || a.detected_at) || 0));
+        state.game = { ...fresh, events: merged, pagination: state.game.events.length > 30 ? state.game.pagination : fresh.pagination };
+        const scroll = window.scrollY;
+        renderGame({ queueTranslation: false });
+        window.scrollTo({ top: scroll, behavior: 'instant' });
+      } else {
+        await syncBootstrap({ signal, current });
+        if (!current()) return false;
+        if (pageRefreshBlocked()) { foregroundRefreshNeeded = true; return false; }
+        let notifications;
+        if (page === 'inbox') {
+          notifications = await readNotifications({ signal, current });
+          if (!notifications || !current()) return false;
+          if (pageRefreshBlocked()) { foregroundRefreshNeeded = true; return false; }
+          state.notifications = notifications;
+          updateUnread(notifications.unread_count);
+        }
+        const scroll = window.scrollY;
+        const preserveDraft = { preserveClosedSchedule: true };
+        if (page === 'home') setMain(homePage(state.bootstrap, state.config), false, preserveDraft);
+        else if (page === 'library') setMain(currentLibraryPage(), false, preserveDraft);
+        else setMain(inboxPage(notifications, state.bootstrap.profile, state.config, state.bootstrap.delivery_status), false, preserveDraft);
+        window.scrollTo({ top: scroll, behavior: 'instant' });
+      }
+      foregroundRefreshNeeded = false;
+      pageRefreshedAt = Date.now();
+      return true;
+    } catch (error) { if (current()) throw error; return false; }
+    finally {
+      // If one game page fails, stop its still-pending sibling as well.
+      task.controller.abort();
+      if (pageRefreshTask === task) pageRefreshTask = null;
+    }
+  })();
+  return task.promise;
+}
+
+function scheduleForegroundRefresh({ mark = false } = {}) {
+  if (!refreshablePage()) return;
+  // Repeated lifecycle events inside the cooldown are the same attempt, not a
+  // delayed retry loop. An already deferred editor/cancelled read stays owed.
+  if (mark && !foregroundRefreshNeeded && !pageRefreshTask && Date.now() - lastForegroundAttemptAt < 5000) return;
+  if (mark) foregroundRefreshNeeded = true;
+  if (Date.now() - pageRefreshedAt < 5000) { foregroundRefreshNeeded = false; return; }
+  if (!foregroundRefreshNeeded || document.hidden || globalThis.navigator?.onLine === false || pageRefreshBlocked()) return;
+  clearTimeout(foregroundRefreshTimer);
+  const epoch = navigationEpoch; const owner = authenticationEpoch;
+  const delay = Math.max(100, 5000 - (Date.now() - lastForegroundAttemptAt));
+  foregroundRefreshTimer = setTimeout(async () => {
+    if (!foregroundRefreshNeeded || epoch !== navigationEpoch || owner !== authenticationEpoch || document.hidden || globalThis.navigator?.onLine === false || pageRefreshBlocked()) return;
+    foregroundRefreshNeeded = false;
+    lastForegroundAttemptAt = Date.now();
+    clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer);
+    try { await refreshPage(epoch); }
+    catch (error) { if (epoch === navigationEpoch && owner === authenticationEpoch && !document.hidden) toast(error.message); }
+    finally {
+      if (epoch === navigationEpoch && owner === authenticationEpoch && !document.hidden) {
+        scheduleGamePoll(epoch); scheduleOverviewPoll(epoch);
+      }
+    }
+  }, delay);
+}
+
+function suspendPageRefresh() {
+  if (hiddenSince === null) hiddenSince = Date.now();
+  cancelPageRefresh({ retry: true });
+}
+
 function scheduleGamePoll(epoch, delay = 4500) {
   clearTimeout(gamePollTimer);
   if (document.hidden || state.route.page !== 'game' || !state.game || (state.game.game.poll_status !== 'awaiting' && !state.game.events.some(event => event.translation_status === 'pending' || event.short_translation_status === 'pending'))) return;
   gamePollTimer = setTimeout(async () => {
     if (epoch !== navigationEpoch || document.hidden || state.route.page !== 'game') return;
-    const appId = state.route.appId;
     try {
-      const index = state.game.events.findIndex(item => eventMatchesId(item, state.route.eventId));
-      const selectedOffset = Math.floor(Math.max(0, index) / 30) * 30;
-      const libraryReadRevision = libraryRevision;
-      const [fresh, selectedPage] = await Promise.all([api.game(appId), selectedOffset ? api.game(appId, selectedOffset) : Promise.resolve(null)]);
-      if (epoch !== navigationEpoch) return;
-      fresh.game = updateGameSummary(fresh.game, libraryReadRevision);
-      const merged = mergeEvents(state.game.events, [...fresh.events, ...(selectedPage?.events || [])]).sort((a, b) => (Date.parse(b.sort_at || b.published_at || b.detected_at) || 0) - (Date.parse(a.sort_at || a.published_at || a.detected_at) || 0));
-      state.game = { ...fresh, events: merged, pagination: state.game.events.length > 30 ? state.game.pagination : fresh.pagination };
-      const scroll = window.scrollY;
-      renderGame();
-      window.scrollTo({ top: scroll, behavior: 'instant' });
-      if (fresh.game.poll_status === 'awaiting' || merged.some(event => event.translation_status === 'pending' || event.short_translation_status === 'pending')) scheduleGamePoll(epoch, Math.min(delay * 1.5, 20000));
+      await refreshPage(epoch);
+      if (epoch === navigationEpoch) scheduleGamePoll(epoch, Math.min(delay * 1.5, 20000));
     } catch { if (epoch === navigationEpoch) scheduleGamePoll(epoch, 20000); }
   }, delay);
 }
@@ -1200,26 +1312,15 @@ function scheduleOverviewPoll(epoch, delay = 5000) {
     if (epoch !== navigationEpoch || document.hidden) return;
     if (overviewToolsOpen()) { scheduleOverviewPoll(epoch, 10000); return; }
     try {
-      await syncBootstrap();
-      if (epoch !== navigationEpoch) return;
-      if (overviewToolsOpen()) { scheduleOverviewPoll(epoch, 10000); return; }
-      const scroll = window.scrollY;
-      if (state.route.page === 'home') setMain(homePage(state.bootstrap, state.config));
-      else if (state.route.page === 'library') setMain(currentLibraryPage());
-      else if (state.route.page === 'inbox') {
-        const result = await readNotifications();
-        if (!result || epoch !== navigationEpoch) return;
-        state.notifications = result;
-        updateUnread(result.unread_count);
-        setMain(inboxPage(result, state.bootstrap.profile, state.config, state.bootstrap.delivery_status));
-      }
-      window.scrollTo({ top: scroll, behavior: 'instant' });
-      scheduleOverviewPoll(epoch, Math.min(delay * 1.5, 20000));
+      await refreshPage(epoch);
+      if (epoch === navigationEpoch) scheduleOverviewPoll(epoch, Math.min(delay * 1.5, 20000));
     } catch { if (epoch === navigationEpoch) scheduleOverviewPoll(epoch, 20000); }
   }, delay);
 }
 
 async function loadRoute({ focus = true, force = false } = {}) {
+  cancelPageRefresh({ reset: true });
+  routeReadPending = false;
   cancelDeliveryDiagnostics({ clear: true });
   clearTimeout(gamePollTimer);
   clearTimeout(overviewPollTimer);
@@ -1322,6 +1423,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
     scheduleGamePoll(epoch);
     return;
   }
+  routeReadPending = true;
   setMain(loadingState(route.page === 'inbox' ? 'Загружаем уведомления…' : 'Загружаем игру…'), focus);
   try {
     if (route.page === 'inbox') {
@@ -1349,6 +1451,7 @@ async function loadRoute({ focus = true, force = false } = {}) {
       } else { renderGame({ focus: false }); scheduleGamePoll(epoch); }
     }
   } catch (error) { if (epoch === navigationEpoch) setMain(errorState(error.message)); }
+  finally { if (epoch === navigationEpoch) routeReadPending = false; }
 }
 
 async function runSearch() {
@@ -1397,11 +1500,12 @@ async function mutateButton(button, key, task) {
   key = `${owner}:${key}`;
   if (mutations.has(key)) return;
   mutations.add(key);
+  cancelPageRefresh({ retry: true });
   button.disabled = true;
   button.setAttribute('aria-busy', 'true');
   try { await task(); }
   catch (error) { if (owner === authenticationEpoch) toast(error.message); }
-  finally { mutations.delete(key); if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); } }
+  finally { mutations.delete(key); if (button.isConnected) { button.disabled = false; button.removeAttribute('aria-busy'); } scheduleForegroundRefresh(); }
 }
 
 document.addEventListener('click', async event => {
@@ -1465,7 +1569,7 @@ document.addEventListener('click', async event => {
   if (action.startsWith('steam-')) {
     if (!state.bootstrap || !['library', 'profile'].includes(state.route.page)) return;
     if (action === 'steam-open') { steam.open = true; steam.pollCount = 0; drawSteam(); await refreshSteam(); }
-    else if (action === 'steam-close' && !steam.busy) { steam.open = false; cancelSteamReads(); drawSteam(); }
+    else if (action === 'steam-close' && !steam.busy) { steam.open = false; cancelSteamReads(); drawSteam(); scheduleForegroundRefresh(); }
     else if (action === 'steam-connect') await connectSteam();
     else if (action === 'steam-continue' && !steam.busy && steam.loginURL) {
       if (!telegram.openSteamLogin(steam.loginURL)) toast('Браузер не открылся. Повторите нажатие или разрешите открытие ссылок.');
@@ -1497,7 +1601,7 @@ document.addEventListener('click', async event => {
   if (action === 'library-transfer-open') {
     transfer.open = true; drawTransfer(); document.querySelector('#library-transfer-input')?.focus();
   }
-  else if (action === 'library-transfer-close' && !transfer.busy) { transfer.open = false; drawTransfer(); }
+  else if (action === 'library-transfer-close' && !transfer.busy) { transfer.open = false; drawTransfer(); scheduleForegroundRefresh(); }
   else if (action === 'library-transfer-select' && !transfer.busy) {
     transfer.selected = selectedTransferGames().length === transfer.entries.length ? new Set() : new Set(transfer.entries.map(game => game.app_id)); drawTransfer();
   }
@@ -1780,6 +1884,7 @@ document.addEventListener('change', async event => {
   }
   const scheduleForm = event.target.closest('#delivery-schedule-form');
   if (scheduleForm) {
+    scheduleForm.closest('.delivery-schedule').dataset.dirty = 'true';
     scheduleForm.querySelector('.schedule-daily').hidden = scheduleForm.elements.mode.value !== 'digest';
     scheduleForm.elements.daily_time.disabled = scheduleForm.elements.mode.value !== 'digest';
     scheduleForm.querySelector('.schedule-quiet-times').hidden = !scheduleForm.elements.quiet_enabled.checked;
@@ -1856,6 +1961,7 @@ document.addEventListener('submit', async event => {
         const result = await api.saveDeliverySchedule(schedule);
         if (!currentOwner()) return;
         deliveryScheduleRevision++;
+        delete form.closest('.delivery-schedule').dataset.dirty;
         // A bootstrap accepted while this write was pending may already know
         // about another delivery action. Its unrelated status fields stay fresh.
         state.bootstrap.delivery_status = statusReadSequence === bootstrapAppliedSequence ? result.delivery_status
@@ -1902,7 +2008,7 @@ document.addEventListener('submit', async event => {
 window.addEventListener('hashchange', () => {
   if (state.bootstrap) loadRoute();
 });
-window.addEventListener('pagehide', () => { cancelDeliveryDiagnostics({ clear: true }); feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelCollectionReads(); cancelSteamReads(); prices?.cancel(); priceImport?.cancel(); priceSync?.invalidate(); clearTimeout(priceSyncPollTimer); clearTimeout(priceSearchTimer); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
+window.addEventListener('pagehide', () => { suspendPageRefresh(); cancelDeliveryDiagnostics({ clear: true }); feed.cancel(); filterPreview.cancel({ clear: true }); recap.cancel(); cancelCollectionReads(); cancelSteamReads(); prices?.cancel(); priceImport?.cancel(); priceSync?.invalidate(); clearTimeout(priceSyncPollTimer); clearTimeout(priceSearchTimer); searchController?.abort(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); clearTimeout(searchTimer); telegram.destroy(); });
 window.addEventListener('pageshow', event => {
   if (!event.persisted) return;
   telegram.init();
@@ -1915,6 +2021,12 @@ window.addEventListener('pageshow', event => {
     updateNavigation();
     return;
   }
+  if (refreshablePage() && restoredRoute.page === state.route.page && restoredRoute.appId === state.route.appId
+    && restoredRoute.eventId === state.route.eventId) {
+    updateNavigation();
+    scheduleForegroundRefresh({ mark: true });
+    return;
+  }
   if (state.bootstrap) loadRoute({ focus: false, force: true });
 });
 window.addEventListener('focus', () => {
@@ -1923,8 +2035,12 @@ window.addEventListener('focus', () => {
 });
 document.addEventListener('visibilitychange', () => {
   if (!state.bootstrap) return;
+  if (document.hidden) suspendPageRefresh();
   if (document.hidden) { cancelDeliveryDiagnostics(); clearTimeout(gamePollTimer); clearTimeout(overviewPollTimer); cancelCollectionReads(); cancelSteamReads(); prices?.cancel(); if (priceImport?.state.busy) priceImportRefreshPending = true; priceImport?.cancel(); if (priceSync?.state.busy) priceSyncRefreshPending = true; priceSync?.cancel(); clearTimeout(priceSyncPollTimer); clearTimeout(priceSearchTimer); }
   else {
+    const longAbsence = hiddenSince !== null && Date.now() - hiddenSince >= 30000;
+    hiddenSince = null;
+    scheduleForegroundRefresh({ mark: longAbsence });
     drawDeliveryDiagnostics();
     if (['collections', 'collection', 'game-lists'].includes(state.route.page)) drawCollections();
     if (state.route.page === 'prices') { drawPrices(); if (!priceTools().state.busy) { priceImportRefreshPending = false; priceSyncRefreshPending = false; refreshPrices({ background: Boolean(priceTools().state.snapshot) }); } else schedulePriceSyncPoll(); }
@@ -1933,7 +2049,12 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+window.addEventListener('online', () => scheduleForegroundRefresh({ mark: true }));
+document.addEventListener('toggle', () => scheduleForegroundRefresh(), true);
+
 async function start() {
+  cancelPageRefresh({ reset: true });
+  routeReadPending = false;
   const owner = ++authenticationEpoch;
   const current = () => owner === authenticationEpoch;
   // Retry starts a fresh owner session even when the endpoint or library IDs

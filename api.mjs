@@ -211,7 +211,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
 
   return {
     configure, authenticate, request,
-    bootstrap: () => request('/api/bootstrap'),
+    bootstrap: signal => request('/api/bootstrap', { signal }),
     search: (query, kind, signal) => request(`/api/search?${new URLSearchParams({ q: query, kind })}`, { signal }),
     library: () => request('/api/library'),
     collections: signal => request('/api/library/collections', { signal }),
@@ -256,7 +256,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     },
     add: appId => request('/api/library', { method: 'POST', body: { app_id: appId } }),
     remove: appId => request(`/api/library/${appId}`, { method: 'DELETE' }),
-    game: (appId, offset = 0) => request(`/api/games/${appId}?${new URLSearchParams({ offset, limit: 30 })}`),
+    game: (appId, offset = 0, signal) => request(`/api/games/${appId}?${new URLSearchParams({ offset, limit: 30 })}`, { signal }),
     deliveryDiagnostic: (eventId, signal) => {
       const id = Number(eventId);
       if (!['number', 'string'].includes(typeof eventId) || !/^\d+$/.test(String(eventId)) || !Number.isSafeInteger(id) || id < 1) throw new ApiError('Для этой записи нет сохранённого идентификатора диагностики.');
@@ -267,7 +267,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch, clock = Date.now
     previewPreferences: (payload, signal) => request('/api/library/preferences/preview', { method: 'POST', body: payload, signal }),
     recap: (filters, signal) => request(`/api/library/recap?${new URLSearchParams(filters)}`, { signal }),
     refresh: appId => request(`/api/games/${appId}/refresh`, { method: 'POST', body: {} }),
-    notifications: () => request('/api/notifications'),
+    notifications: signal => request('/api/notifications', { signal }),
     markRead: () => request('/api/notifications/read', { method: 'POST', body: {} }),
     setTelegramDelivery: enabled => request('/api/profile/delivery', { method: 'POST', body: { enabled } }),
     testTelegramDelivery: () => request('/api/profile/delivery/test', { method: 'POST', body: {} }),
